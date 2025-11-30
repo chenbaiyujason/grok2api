@@ -3,6 +3,8 @@
 from enum import Enum
 from typing import Dict, Any, Tuple
 
+from pydantic import BaseModel
+
 
 # 模型配置
 _MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
@@ -161,3 +163,7 @@ class Models(Enum):
     def get_all_model_names(cls) -> list[str]:
         """获取所有模型名称"""
         return list(_MODEL_CONFIG.keys())
+
+class VideoResponse(BaseModel):
+    video_url: str
+    video_prompt: str

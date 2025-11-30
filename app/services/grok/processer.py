@@ -1,5 +1,6 @@
 """Grok API 响应处理器 - 处理流式和非流式响应"""
 
+from app.models.grok_models import VideoResponse
 import orjson
 import uuid
 import time
@@ -9,6 +10,7 @@ from typing import AsyncGenerator, Tuple
 from app.core.config import setting
 from app.core.exception import GrokApiException
 from app.core.logger import logger
+from app.core.r2 import upload_fileobj, get_public_url
 from app.models.openai_schema import (
     OpenAIChatCompletionResponse,
     OpenAIChatCompletionChoice,
@@ -83,7 +85,7 @@ class GrokResponseProcessor:
                 # 视频响应
                 if video_resp := grok_resp.get("streamingVideoGenerationResponse"):
                     if video_url := video_resp.get("videoUrl"):
-                        content = await GrokResponseProcessor._build_video_content(video_url, auth_token)
+                        content = await GrokResponseProcessor._build_video_content(video_url, video_resp.get("videoPrompt"), auth_token)
                         result = GrokResponseProcessor._build_response(content, model or "grok-imagine-0.9")
                         response_closed = True
                         response.close()
@@ -204,7 +206,6 @@ class GrokResponseProcessor:
                     if video_resp := grok_resp.get("streamingVideoGenerationResponse"):
                         progress = video_resp.get("progress", 0)
                         v_url = video_resp.get("videoUrl")
-                        
                         # 进度更新
                         if progress > last_video_progress:
                             last_video_progress = progress
@@ -220,8 +221,9 @@ class GrokResponseProcessor:
                         
                         # 视频URL
                         if v_url:
+                            video_prompt = video_resp.get("videoPrompt")
                             logger.debug("[Processor] 视频生成完成")
-                            video_content = await GrokResponseProcessor._build_video_content(v_url, auth_token)
+                            video_content = await GrokResponseProcessor._build_video_content(v_url, video_prompt, auth_token)
                             yield make_chunk(video_content)
                         
                         continue
@@ -358,22 +360,55 @@ class GrokResponseProcessor:
                     logger.warning(f"[Processor] 关闭失败: {e}")
 
     @staticmethod
-    async def _build_video_content(video_url: str, auth_token: str) -> str:
+    async def _build_video_content(video_url: str, video_prompt: str, auth_token: str) -> str:
         """构建视频内容"""
-        logger.debug(f"[Processor] 检测到视频: {video_url}")
-        full_url = f"https://assets.grok.com/{video_url}"
+        logger.debug(f"[Processor] 检测到视频: {video_url}，提示词: {video_prompt}")
+        r2_url = None
         
         try:
+            # 下载视频到临时文件
             cache_path = await video_cache_service.download_video(f"/{video_url}", auth_token)
-            if cache_path:
-                video_path = video_url.replace('/', '-')
-                base_url = setting.global_config.get("base_url", "")
-                local_url = f"{base_url}/images/{video_path}" if base_url else f"/images/{video_path}"
-                return f'<video src="{local_url}" controls="controls" width="500" height="300"></video>\\n'
+            if cache_path and cache_path.exists():
+                try:
+                    # 读取视频文件内容
+                    video_data = cache_path.read_bytes()
+                    
+                    # 生成 R2 对象键
+                    object_key = f"videos/{video_url.replace('/', '-')}"
+                    
+                    # 确定 content_type（根据文件扩展名）
+                    content_type = "video/mp4"  # 默认
+                    if cache_path.suffix.lower() in ['.webm']:
+                        content_type = "video/webm"
+                    elif cache_path.suffix.lower() in ['.mov']:
+                        content_type = "video/quicktime"
+                    
+                    # 上传到 R2
+                    await upload_fileobj(video_data, object_key, content_type=content_type)
+                    logger.debug(f"[Processor] 视频已上传到 R2: {object_key}")
+                    
+                    # 获取 R2 公开 URL
+                    r2_url = get_public_url(object_key)
+                    
+                    # 删除本地临时文件
+                    try:
+                        cache_path.unlink()
+                    except Exception as e:
+                        logger.warning(f"[Processor] 删除临时文件失败: {e}")
+                    
+                    return f'<video src="{r2_url}" controls="controls" width="500" height="300"></video>\\n'
+                except Exception as e:
+                    logger.warning(f"[Processor] 上传视频到 R2 失败: {e}")
+                    # 如果上传失败，尝试删除临时文件
+                    try:
+                        if cache_path.exists():
+                            cache_path.unlink()
+                    except Exception:
+                        pass
         except Exception as e:
-            logger.warning(f"[Processor] 缓存视频失败: {e}")
+            logger.warning(f"[Processor] 处理视频失败: {e}")
         
-        return f'<video src="{full_url}" controls="controls" width="500" height="300"></video>\\n'
+        return VideoResponse(video_url=r2_url or "", video_prompt=video_prompt or "").model_dump_json()
 
     @staticmethod
     async def _append_images(content: str, images: list, auth_token: str) -> str:

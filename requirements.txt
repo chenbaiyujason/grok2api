@@ -12,3 +12,6 @@ redis==6.4.0
 fastmcp==2.12.4
 cryptography==46.0.3
 orjson==3.11.4
+aioboto3
+pydantic-settings
+pydantic
