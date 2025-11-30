@@ -396,7 +396,7 @@ class GrokResponseProcessor:
                     except Exception as e:
                         logger.warning(f"[Processor] 删除临时文件失败: {e}")
                     
-                    return f'<video src="{r2_url}" controls="controls" width="500" height="300"></video>\\n'
+                    return VideoResponse(video_url=r2_url or "", video_prompt=video_prompt or "").model_dump_json()
                 except Exception as e:
                     logger.warning(f"[Processor] 上传视频到 R2 失败: {e}")
                     # 如果上传失败，尝试删除临时文件
