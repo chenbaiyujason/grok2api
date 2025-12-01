@@ -9,7 +9,8 @@ from app.core.env import env
 
 # 默认配置
 DEFAULT_FLOW = {
-    "session_token": ""
+    "session_token": "",
+    "csrf_token": ""
 }
 
 DEFAULT_GLOBAL = {
@@ -133,6 +134,17 @@ class ConfigManager:
         
         # 如果管理后台没有配置，则使用环境变量
         env_token = env.flow_session_token or ""
+        return env_token.strip()
+    
+    def get_csrf_token(self) -> str:
+        """获取 csrf_token，优先使用管理后台配置，如果没有则使用环境变量"""
+        # 优先使用管理后台配置的 csrf_token
+        csrf_token = self.flow_config.get("csrf_token", "").strip()
+        if csrf_token:
+            return csrf_token
+        
+        # 如果管理后台没有配置，则使用环境变量
+        env_token = getattr(env, "flow_csrf_token", None) or ""
         return env_token.strip()
 
 

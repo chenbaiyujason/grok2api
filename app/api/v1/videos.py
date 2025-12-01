@@ -3,9 +3,11 @@
 import time
 import base64
 import uuid
-from typing import Dict, Any, Optional, List, Literal
+from io import BytesIO
+from typing import Dict, Any, Optional, List, Literal, Tuple
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
+from PIL import Image
 
 from app.core.config import setting
 from app.core.logger import logger
@@ -84,12 +86,31 @@ async def _get_media_id_from_url(url: str, access_token: str, aspect_ratio: str)
     return media_id
 
 
-async def _upload_to_r2(file_url: str, file_type: str = "image") -> Optional[str]:
+async def _get_image_dimensions(image_bytes: bytes) -> Tuple[int, int]:
+    """从图片字节数据中读取宽高
+    
+    Args:
+        image_bytes: 图片字节数据
+        
+    Returns:
+        (width, height)
+    """
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        return image.size  # (width, height)
+    except Exception as e:
+        logger.warning(f"[Image] 读取图片尺寸失败: {e}")
+        return (0, 0)
+
+
+async def _upload_to_r2(file_url: str, file_type: str = "image", file_bytes: Optional[bytes] = None, mime_type: Optional[str] = None) -> Optional[str]:
     """下载文件并上传到 R2
     
     Args:
         file_url: 文件 URL
         file_type: 文件类型 ("image" 或 "video")
+        file_bytes: 可选的已下载文件字节数据，如果提供则跳过下载
+        mime_type: 可选的 MIME 类型，如果提供 file_bytes 则必须提供
         
     Returns:
         R2 公开链接，如果上传失败或未配置则返回 None
@@ -102,12 +123,13 @@ async def _upload_to_r2(file_url: str, file_type: str = "image") -> Optional[str
             logger.debug("[R2] R2 未配置，跳过上传")
             return None
         
-        # 下载文件
-        if file_type == "image":
-            file_bytes, mime_type = await FlowClient.download_image(file_url)
-        else:
-            # 下载视频
-            file_bytes, mime_type = await FlowClient.download_video(file_url)
+        # 下载文件（如果未提供）
+        if file_bytes is None:
+            if file_type == "image":
+                file_bytes, mime_type = await FlowClient.download_image(file_url)
+            else:
+                # 下载视频
+                file_bytes, mime_type = await FlowClient.download_video(file_url)
         
         # 生成 R2 对象键
         file_ext = ".jpg" if file_type == "image" else ".mp4"
@@ -160,11 +182,14 @@ async def generate_video(
                 }
             )
         
+        # 获取 csrf_token（可选）
+        csrf_token = setting.get_csrf_token() or None
+        
         # 获取 access_token
-        access_token = await FlowClient.get_access_token(session_token)
+        access_token = await FlowClient.get_access_token(session_token, csrf_token)
         
         # 获取或创建项目
-        project_id = await FlowClient.get_or_create_project(session_token)
+        project_id = await FlowClient.get_or_create_project(session_token, csrf_token)
         
         # 处理图片，获取mediaId
         first_frame_id = None
@@ -499,11 +524,14 @@ async def generate_image(
                 }
             )
         
+        # 获取 csrf_token（可选）
+        csrf_token = setting.get_csrf_token() or None
+        
         # 获取 access_token
-        access_token = await FlowClient.get_access_token(session_token)
+        access_token = await FlowClient.get_access_token(session_token, csrf_token)
         
         # 获取或创建项目
-        project_id = await FlowClient.get_or_create_project(session_token)
+        project_id = await FlowClient.get_or_create_project(session_token, csrf_token)
         
         # 如果是图生图，先检查缓存，然后下载并上传图片
         reference_image_id = None
@@ -566,13 +594,20 @@ async def generate_image(
         
         logger.debug(f"[Image] 图片生成成功: {media_generation_id[:50] if media_generation_id else 'unknown'}...")
         
-        # 上传到 R2
+        # 上传到 R2 并读取图片尺寸
         r2_url = None
+        width = 0
+        height = 0
         if fife_url:
             try:
-                r2_url = await _upload_to_r2(fife_url, "image")
+                # 下载图片以获取尺寸
+                image_bytes, mime_type = await FlowClient.download_image(fife_url)
+                width, height = await _get_image_dimensions(image_bytes)
+                
+                # 上传到 R2（复用已下载的图片数据）
+                r2_url = await _upload_to_r2(fife_url, "image", file_bytes=image_bytes, mime_type=mime_type)
             except Exception as e:
-                logger.warning(f"[Image] 上传到 R2 失败: {e}")
+                logger.warning(f"[Image] 上传到 R2 或读取尺寸失败: {e}")
         
         response = {
             "id": media_generation_id,
@@ -585,7 +620,9 @@ async def generate_image(
             "url": r2_url or fife_url,  # 优先返回 R2 链接
             "aspect_ratio": image_data_obj.get("aspectRatio"),
             "seed": image_data_obj.get("seed"),
-            "model": image_data_obj.get("modelNameType")
+            "model": image_data_obj.get("modelNameType"),
+            "width": width,
+            "height": height
         }
         
         # 如果返回了 base64 编码的图片，也包含在响应中

@@ -2,6 +2,7 @@
 
 import asyncio
 import orjson
+import time
 from typing import Dict, Any, Optional, Tuple, List
 from curl_cffi import requests as curl_requests
 from datetime import datetime
@@ -26,6 +27,48 @@ TIMEOUT = 120
 BROWSER = "chrome133a"
 MAX_RETRY = 3
 RETRY_DELAY = 5  # 429错误重试延迟（秒）
+
+
+def _get_base_headers(
+    sec_fetch_site: str = "cross-site",
+    referer: str = "https://labs.google/",
+    add_origin: bool = False
+) -> Dict[str, str]:
+    """获取基础请求头，防止被机器人识别
+    
+    Args:
+        sec_fetch_site: sec-fetch-site 值，cross-site 或 same-origin
+        referer: Referer 值
+        add_origin: 是否添加 Origin header（跨域 POST 请求需要）
+        
+    Returns:
+        基础请求头字典
+    """
+    headers = {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "cache-control": "no-cache",
+        "pragma": "no-cache",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": sec_fetch_site,
+        "Referer": referer,
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
+    }
+    
+    # 对于跨域 POST 请求，添加 Origin header
+    if add_origin and sec_fetch_site == "cross-site":
+        # 从 Referer 提取 Origin
+        if referer.startswith("https://"):
+            origin = referer.rstrip("/")
+            headers["Origin"] = origin
+    
+    return headers
 
 
 class FlowClient:
@@ -118,25 +161,31 @@ class FlowClient:
     """Flow API 客户端"""
 
     @staticmethod
-    async def get_access_token(session_token: str) -> str:
+    async def get_access_token(session_token: str, csrf_token: Optional[str] = None) -> str:
         """获取 access_token
         
         Args:
             session_token: __Secure-next-auth.session-token
+            csrf_token: __Host-next-auth.csrf-token (可选)
             
         Returns:
             access_token
         """
         try:
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "cache-control": "no-cache",
+            headers = _get_base_headers(
+                sec_fetch_site="same-origin",
+                referer="https://labs.google/fx/tools/flow"
+            )
+            
+            # 构建 cookie 字符串
+            cookie_parts = [f"__Secure-next-auth.session-token={session_token}"]
+            if csrf_token:
+                cookie_parts.append(f"__Host-next-auth.csrf-token={csrf_token}")
+            
+            headers.update({
                 "content-type": "application/json",
-                "pragma": "no-cache",
-                "cookie": f"__Secure-next-auth.session-token={session_token}",
-                "Referer": "https://labs.google/fx/tools/flow"
-            }
+                "cookie": "; ".join(cookie_parts)
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.get,
@@ -180,14 +229,10 @@ class FlowClient:
             余额信息
         """
         try:
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
+            headers = _get_base_headers()
+            headers.update({
+                "authorization": f"Bearer {access_token}"
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.get,
@@ -216,11 +261,12 @@ class FlowClient:
             raise GrokApiException(f"获取余额失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
-    async def get_user_projects(session_token: str) -> Dict[str, Any]:
+    async def get_user_projects(session_token: str, csrf_token: Optional[str] = None) -> Dict[str, Any]:
         """获取用户项目列表
         
         Args:
             session_token: __Secure-next-auth.session-token
+            csrf_token: __Host-next-auth.csrf-token (可选)
             
         Returns:
             项目列表
@@ -244,15 +290,20 @@ class FlowClient:
             encoded_input = urllib.parse.quote(input_param)
             url = f"{USER_PROJECTS_URL}?input={encoded_input}"
             
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "cache-control": "no-cache",
+            headers = _get_base_headers(
+                sec_fetch_site="same-origin",
+                referer="https://labs.google/fx/tools/flow"
+            )
+            
+            # 构建 cookie 字符串
+            cookie_parts = [f"__Secure-next-auth.session-token={session_token}"]
+            if csrf_token:
+                cookie_parts.append(f"__Host-next-auth.csrf-token={csrf_token}")
+            
+            headers.update({
                 "content-type": "application/json",
-                "pragma": "no-cache",
-                "cookie": f"__Secure-next-auth.session-token={session_token}",
-                "Referer": "https://labs.google/fx/tools/flow"
-            }
+                "cookie": "; ".join(cookie_parts)
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.get,
@@ -281,17 +332,18 @@ class FlowClient:
             raise GrokApiException(f"获取项目列表失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
-    async def get_latest_project(session_token: str) -> Optional[str]:
+    async def get_latest_project(session_token: str, csrf_token: Optional[str] = None) -> Optional[str]:
         """获取最新的项目 ID
         
         Args:
             session_token: __Secure-next-auth.session-token
+            csrf_token: __Host-next-auth.csrf-token (可选)
             
         Returns:
             项目 ID，如果没有则返回 None
         """
         try:
-            data = await FlowClient.get_user_projects(session_token)
+            data = await FlowClient.get_user_projects(session_token, csrf_token)
             
             projects = data.get("result", {}).get("data", {}).get("json", {}).get("result", {}).get("projects", [])
             
@@ -315,12 +367,13 @@ class FlowClient:
             return None
 
     @staticmethod
-    async def create_project(session_token: str, project_title: Optional[str] = None) -> str:
+    async def create_project(session_token: str, project_title: Optional[str] = None, csrf_token: Optional[str] = None) -> str:
         """创建新项目
         
         Args:
             session_token: __Secure-next-auth.session-token
             project_title: 项目标题，如果不提供则使用时间戳
+            csrf_token: __Host-next-auth.csrf-token (可选)
             
         Returns:
             项目 ID
@@ -338,15 +391,20 @@ class FlowClient:
                 }
             }
             
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "cache-control": "no-cache",
+            headers = _get_base_headers(
+                sec_fetch_site="same-origin",
+                referer="https://labs.google/fx/tools/flow"
+            )
+            
+            # 构建 cookie 字符串
+            cookie_parts = [f"__Secure-next-auth.session-token={session_token}"]
+            if csrf_token:
+                cookie_parts.append(f"__Host-next-auth.csrf-token={csrf_token}")
+            
+            headers.update({
                 "content-type": "application/json",
-                "pragma": "no-cache",
-                "cookie": f"__Secure-next-auth.session-token={session_token}",
-                "Referer": "https://labs.google/fx/tools/flow"
-            }
+                "cookie": "; ".join(cookie_parts)
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.post,
@@ -381,19 +439,20 @@ class FlowClient:
             raise GrokApiException(f"创建项目失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
-    async def get_or_create_project(session_token: str) -> str:
+    async def get_or_create_project(session_token: str, csrf_token: Optional[str] = None) -> str:
         """获取或创建项目
         
         Args:
             session_token: __Secure-next-auth.session-token
+            csrf_token: __Host-next-auth.csrf-token (可选)
             
         Returns:
             项目 ID
         """
-        project_id = await FlowClient.get_latest_project(session_token)
+        project_id = await FlowClient.get_latest_project(session_token, csrf_token)
         
         if not project_id:
-            project_id = await FlowClient.create_project(session_token)
+            project_id = await FlowClient.create_project(session_token, None, csrf_token)
         
         return project_id
 
@@ -442,6 +501,7 @@ class FlowClient:
         
         body = {
             "clientContext": {
+                "sessionId": f";{int(time.time() * 1000)}",
                 "projectId": project_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": user_paygate_tier
@@ -459,15 +519,11 @@ class FlowClient:
             }]
         }
         
-        headers = {
-            "accept": "*/*",
-            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        headers = _get_base_headers(add_origin=True)
+        headers.update({
             "authorization": f"Bearer {access_token}",
-            "cache-control": "no-cache",
-            "content-type": "text/plain;charset=UTF-8",
-            "pragma": "no-cache",
-            "Referer": "https://labs.google/"
-        }
+            "content-type": "text/plain;charset=UTF-8"
+        })
         
         # 重试逻辑处理 429 错误
         for attempt in range(MAX_RETRY):
@@ -555,6 +611,7 @@ class FlowClient:
         
         body = {
             "clientContext": {
+                "sessionId": f";{int(time.time() * 1000)}",
                 "projectId": project_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": user_paygate_tier
@@ -579,15 +636,11 @@ class FlowClient:
             }]
         }
         
-        headers = {
-            "accept": "*/*",
-            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        headers = _get_base_headers(add_origin=True)
+        headers.update({
             "authorization": f"Bearer {access_token}",
-            "cache-control": "no-cache",
-            "content-type": "text/plain;charset=UTF-8",
-            "pragma": "no-cache",
-            "Referer": "https://labs.google/"
-        }
+            "content-type": "text/plain;charset=UTF-8"
+        })
         
         # 重试逻辑处理 429 错误
         for attempt in range(MAX_RETRY):
@@ -675,6 +728,7 @@ class FlowClient:
         
         body = {
             "clientContext": {
+                "sessionId": f";{int(time.time() * 1000)}",
                 "projectId": project_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": user_paygate_tier
@@ -695,15 +749,11 @@ class FlowClient:
             }]
         }
         
-        headers = {
-            "accept": "*/*",
-            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        headers = _get_base_headers(add_origin=True)
+        headers.update({
             "authorization": f"Bearer {access_token}",
-            "cache-control": "no-cache",
-            "content-type": "text/plain;charset=UTF-8",
-            "pragma": "no-cache",
-            "Referer": "https://labs.google/"
-        }
+            "content-type": "text/plain;charset=UTF-8"
+        })
         
         # 重试逻辑处理 429 错误
         for attempt in range(MAX_RETRY):
@@ -792,6 +842,7 @@ class FlowClient:
         
         body = {
             "clientContext": {
+                "sessionId": f";{int(time.time() * 1000)}",
                 "projectId": project_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": user_paygate_tier
@@ -815,15 +866,11 @@ class FlowClient:
             }]
         }
         
-        headers = {
-            "accept": "*/*",
-            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        headers = _get_base_headers(add_origin=True)
+        headers.update({
             "authorization": f"Bearer {access_token}",
-            "cache-control": "no-cache",
-            "content-type": "text/plain;charset=UTF-8",
-            "pragma": "no-cache",
-            "Referer": "https://labs.google/"
-        }
+            "content-type": "text/plain;charset=UTF-8"
+        })
         
         # 重试逻辑处理 429 错误
         for attempt in range(MAX_RETRY):
@@ -898,15 +945,11 @@ class FlowClient:
                 "operations": operations
             }
             
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            headers = _get_base_headers()
+            headers.update({
                 "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
+                "content-type": "text/plain;charset=UTF-8"
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.post,
@@ -945,11 +988,7 @@ class FlowClient:
             (图片字节数据, MIME 类型)
         """
         try:
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
+            headers = _get_base_headers()
             
             response = await asyncio.to_thread(
                 curl_requests.get,
@@ -1003,11 +1042,10 @@ class FlowClient:
             (视频字节数据, MIME 类型)
         """
         try:
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            headers = _get_base_headers()
+            headers.update({
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.get,
@@ -1079,15 +1117,11 @@ class FlowClient:
                 }
             }
             
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            headers = _get_base_headers()
+            headers.update({
                 "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
+                "content-type": "text/plain;charset=UTF-8"
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.post,
@@ -1171,15 +1205,11 @@ class FlowClient:
             
             url = GENERATE_IMAGE_URL_TEMPLATE.format(project_id=project_id)
             
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            headers = _get_base_headers()
+            headers.update({
                 "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
+                "content-type": "text/plain;charset=UTF-8"
+            })
             
             response = await asyncio.to_thread(
                 curl_requests.post,
