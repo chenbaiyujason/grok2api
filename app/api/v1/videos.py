@@ -57,6 +57,17 @@ class ImageGenerateRequest(BaseModel):
     model: Optional[str] = "GEM_PIX_2"
 
 
+def _convert_video_aspect_ratio_to_image(video_aspect_ratio: str) -> str:
+    """将视频宽高比转换为图片宽高比"""
+    if video_aspect_ratio == "VIDEO_ASPECT_RATIO_LANDSCAPE":
+        return "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    elif video_aspect_ratio == "VIDEO_ASPECT_RATIO_PORTRAIT":
+        return "IMAGE_ASPECT_RATIO_PORTRAIT"
+    else:
+        # 默认返回横向
+        return "IMAGE_ASPECT_RATIO_LANDSCAPE"
+
+
 async def _get_media_id_from_url(url: str, access_token: str, aspect_ratio: str) -> str:
     """从URL获取mediaId（使用缓存）"""
     # 检查缓存
@@ -71,12 +82,15 @@ async def _get_media_id_from_url(url: str, access_token: str, aspect_ratio: str)
     # 转换为 base64
     image_base64 = base64.b64encode(image_bytes).decode('utf-8')
     
+    # 将视频宽高比转换为图片宽高比
+    image_aspect_ratio = _convert_video_aspect_ratio_to_image(aspect_ratio)
+    
     # 上传图片
     media_id = await FlowClient.upload_image(
         access_token=access_token,
         image_base64=image_base64,
         mime_type=mime_type,
-        aspect_ratio=aspect_ratio
+        aspect_ratio=image_aspect_ratio
     )
     
     # 保存到缓存

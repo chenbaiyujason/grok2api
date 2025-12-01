@@ -27,6 +27,10 @@ TIMEOUT = 120
 BROWSER = "chrome133a"
 MAX_RETRY = 3
 RETRY_DELAY = 5  # 429错误重试延迟（秒）
+ACCESS_TOKEN_CACHE_TTL = 600  # access_token 缓存时间（秒），10分钟
+
+# access_token 缓存：{session_token: {"token": access_token, "expires_at": timestamp}}
+_access_token_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_base_headers(
@@ -162,7 +166,7 @@ class FlowClient:
 
     @staticmethod
     async def get_access_token(session_token: str, csrf_token: Optional[str] = None) -> str:
-        """获取 access_token
+        """获取 access_token（带本地缓存，10分钟有效期）
         
         Args:
             session_token: __Secure-next-auth.session-token
@@ -171,6 +175,20 @@ class FlowClient:
         Returns:
             access_token
         """
+        # 检查缓存
+        cache_key = session_token
+        current_time = time.time()
+        
+        if cache_key in _access_token_cache:
+            cache_entry = _access_token_cache[cache_key]
+            if current_time < cache_entry["expires_at"]:
+                logger.debug("[Flow] 使用缓存的 access_token")
+                return cache_entry["token"]
+            else:
+                # 缓存已过期，清除
+                del _access_token_cache[cache_key]
+                logger.debug("[Flow] 缓存已过期，重新获取 access_token")
+        
         try:
             headers = _get_base_headers(
                 sec_fetch_site="same-origin",
@@ -196,6 +214,8 @@ class FlowClient:
             )
             
             if response.status_code != 200:
+                # 清除可能存在的无效缓存
+                _access_token_cache.pop(cache_key, None)
                 raise GrokApiException(
                     f"获取 access_token 失败: {response.status_code}",
                     "HTTP_ERROR",
@@ -206,15 +226,30 @@ class FlowClient:
             access_token = data.get("access_token")
             
             if not access_token:
+                # 清除可能存在的无效缓存
+                _access_token_cache.pop(cache_key, None)
                 raise GrokApiException("access_token 不存在", "NO_ACCESS_TOKEN")
             
-            logger.debug("[Flow] 成功获取 access_token")
+            # 更新缓存
+            _access_token_cache[cache_key] = {
+                "token": access_token,
+                "expires_at": current_time + ACCESS_TOKEN_CACHE_TTL
+            }
+            
+            logger.debug("[Flow] 成功获取 access_token 并更新缓存")
             return access_token
             
         except curl_requests.RequestsError as e:
+            # 清除可能存在的无效缓存
+            _access_token_cache.pop(cache_key, None)
             logger.error(f"[Flow] 网络错误: {e}")
             raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+        except GrokApiException:
+            # 异常已处理，直接抛出
+            raise
         except Exception as e:
+            # 清除可能存在的无效缓存
+            _access_token_cache.pop(cache_key, None)
             logger.error(f"[Flow] 获取 access_token 失败: {e}")
             raise GrokApiException(f"获取 access_token 失败: {e}", "REQUEST_ERROR") from e
 
@@ -1133,8 +1168,17 @@ class FlowClient:
             )
             
             if response.status_code != 200:
+                # 尝试获取错误详情
+                error_detail = f"状态码: {response.status_code}"
+                try:
+                    error_body = response.text
+                    if error_body:
+                        error_detail += f", 响应: {error_body[:500]}"
+                except Exception:
+                    pass
+                logger.error(f"[Flow] 上传图片失败: {error_detail}")
                 raise GrokApiException(
-                    f"上传图片失败: {response.status_code}",
+                    f"上传图片失败: {error_detail}",
                     "HTTP_ERROR",
                     {"status": response.status_code}
                 )
