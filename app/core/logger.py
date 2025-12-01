@@ -16,8 +16,8 @@ FILTER_PATTERNS = [
 ]
 
 
-class MCPLogFilter(logging.Filter):
-    """MCP日志过滤器 - 过滤大量数据的DEBUG日志"""
+class LogFilter(logging.Filter):
+    """日志过滤器 - 过滤大量数据的DEBUG日志"""
 
     def filter(self, record: logging.LogRecord) -> bool:
         """过滤日志"""
@@ -25,10 +25,6 @@ class MCPLogFilter(logging.Filter):
         if record.name == "sse_starlette.sse" and record.levelno == logging.DEBUG:
             msg = record.getMessage()
             return not any(p in msg for p in FILTER_PATTERNS)
-
-        # 过滤MCP streamable_http的DEBUG日志
-        if "mcp.server.streamable_http" in record.name and record.levelno == logging.DEBUG:
-            return False
 
         return True
 
@@ -66,13 +62,13 @@ class LoggerManager:
 
         # 格式器和过滤器
         formatter = logging.Formatter(log_format)
-        mcp_filter = MCPLogFilter()
+        log_filter = LogFilter()
 
         # 控制台处理器
         console = logging.StreamHandler(sys.stdout)
         console.setLevel(log_level)
         console.setFormatter(formatter)
-        console.addFilter(mcp_filter)
+        console.addFilter(log_filter)
 
         # 文件处理器（10MB，5个备份）
         file_handler = RotatingFileHandler(
@@ -80,7 +76,7 @@ class LoggerManager:
         )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
-        file_handler.addFilter(mcp_filter)
+        file_handler.addFilter(log_filter)
 
         # 添加处理器
         self.logger.addHandler(console)
@@ -98,8 +94,6 @@ class LoggerManager:
             "uvicorn": logging.INFO,
             "fastapi": logging.INFO,
             "aiomysql": logging.WARNING,
-            "mcp": logging.CRITICAL,
-            "fastmcp": logging.CRITICAL,
         }
         
         for name, level in config.items():

@@ -29,7 +29,7 @@ class AuthManager:
     @staticmethod
     def verify(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[str]:
         """验证令牌"""
-        api_key = setting.grok_config.get("api_key")
+        api_key = setting.global_config.get("api_key", "")
 
         # 未设置时跳过
         if not api_key:
@@ -47,7 +47,7 @@ class AuthManager:
         if credentials.credentials != api_key:
             raise HTTPException(
                 status_code=401,
-                detail=_build_error(f"令牌无效，长度: {len(credentials.credentials)}", "invalid_token")
+                detail=_build_error(f"令牌无效", "invalid_token")
             )
 
         logger.debug("[Auth] 令牌认证成功")
