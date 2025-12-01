@@ -2,7 +2,6 @@
 
 import asyncio
 import orjson
-import base64
 from typing import Dict, Any, Optional, Tuple, List
 from curl_cffi import requests as curl_requests
 from datetime import datetime
@@ -13,7 +12,7 @@ from app.core.exception import GrokApiException
 
 # 常量
 SESSION_URL = "https://labs.google/fx/api/auth/session"
-CREDITS_URL = "https://aisandbox-pa.googleapis.com/v1/credits?key=AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY"
+CREDITS_URL = "https://aisandbox-pa.googleapis.com/v1/credits"
 USER_PROJECTS_URL = "https://labs.google/fx/api/trpc/project.searchUserProjects"
 CREATE_PROJECT_URL = "https://labs.google/fx/api/trpc/project.createProject"
 GENERATE_VIDEO_URL = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText"
@@ -26,9 +25,96 @@ GENERATE_IMAGE_URL_TEMPLATE = "https://aisandbox-pa.googleapis.com/v1/projects/{
 TIMEOUT = 120
 BROWSER = "chrome133a"
 MAX_RETRY = 3
+RETRY_DELAY = 5  # 429错误重试延迟（秒）
 
 
 class FlowClient:
+    """Flow API 客户端"""
+    
+    @staticmethod
+    def _get_video_model_key(
+        model: str,
+        aspect_ratio: str,
+        has_start_image: bool = False,
+        has_end_image: bool = False,
+        has_reference_images: bool = False
+    ) -> str:
+        """根据模型、宽高比和图片类型生成 videoModelKey
+        
+        Args:
+            model: 模型名称 (veo-3_1_fast, veo-3_1_relaxed, veo-3_1_quality)
+            aspect_ratio: 宽高比 (VIDEO_ASPECT_RATIO_LANDSCAPE, VIDEO_ASPECT_RATIO_PORTRAIT)
+            has_start_image: 是否有起始图片
+            has_end_image: 是否有结束图片
+            has_reference_images: 是否有参考图片
+            
+        Returns:
+            videoModelKey
+        """
+        is_landscape = aspect_ratio == "VIDEO_ASPECT_RATIO_LANDSCAPE"
+        
+        # 参考图片生成（只支持横屏）
+        if has_reference_images:
+            if model == "veo-3_1_quality":
+                raise GrokApiException("quality 模型不支持参考图片生成", "UNSUPPORTED_MODEL")
+            base_key = "veo_3_0_r2v_fast_ultra"
+            if model == "veo-3_1_relaxed":
+                base_key += "_relaxed"
+            return base_key
+        
+        # 首尾帧生成
+        if has_start_image and has_end_image:
+            if model == "veo-3_1_fast":
+                if is_landscape:
+                    base_key = "veo_3_1_i2v_s_fast_ultra_fl"
+                else:
+                    base_key = "veo_3_1_i2v_s_fast_portrait_ultra_fl"
+            elif model == "veo-3_1_relaxed":
+                if is_landscape:
+                    base_key = "veo_3_1_i2v_s_fast_ultra_fl_relaxed"
+                else:
+                    base_key = "veo_3_1_i2v_s_fast_portrait_ultra_fl_relaxed"
+            else:  # quality
+                if is_landscape:
+                    base_key = "veo_3_1_i2v_s_fl"
+                else:
+                    base_key = "veo_3_1_i2v_s_portrait_fl"
+            return base_key
+        
+        # 首帧生成
+        if has_start_image:
+            if model == "veo-3_1_fast":
+                if is_landscape:
+                    base_key = "veo_3_1_i2v_s_fast_ultra"
+                else:
+                    base_key = "veo_3_1_i2v_s_fast_portrait"
+            elif model == "veo-3_1_relaxed":
+                if is_landscape:
+                    base_key = "veo_3_1_i2v_s_fast_ultra_relaxed"
+                else:
+                    base_key = "veo_3_1_i2v_s_fast_portrait_relaxed"
+            else:  # quality
+                if is_landscape:
+                    base_key = "veo_3_1_i2v_s"
+                else:
+                    base_key = "veo_3_1_i2v_s_portrait"
+            return base_key
+        
+        # 文生视频
+        if model == "veo-3_1_fast":
+            if is_landscape:
+                base_key = "veo_3_1_t2v_fast_ultra"
+            else:
+                base_key = "veo_3_1_t2v_fast_portrait_ultra"
+        elif model == "veo-3_1_relaxed":
+            if is_landscape:
+                base_key = "veo_3_1_t2v_fast_ultra_relaxed"
+            else:
+                base_key = "veo_3_1_t2v_fast_portrait_ultra_relaxed"
+        else:  # quality
+            base_key = "veo_3_1_t2v"
+        
+        return base_key
     """Flow API 客户端"""
 
     @staticmethod
@@ -319,7 +405,8 @@ class FlowClient:
         scene_id: Optional[str] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         seed: Optional[int] = None,
-        user_paygate_tier: str = "PAYGATE_TIER_ONE"
+        user_paygate_tier: str = "PAYGATE_TIER_ONE",
+        model: str = "veo-3_1_fast"
     ) -> Dict[str, Any]:
         """生成视频
         
@@ -331,74 +418,110 @@ class FlowClient:
             aspect_ratio: 宽高比
             seed: 随机种子
             user_paygate_tier: 用户付费等级
+            model: 模型名称 (veo-3_1_fast, veo-3_1_relaxed, veo-3_1_quality)
             
         Returns:
             生成结果
         """
-        try:
-            import uuid
-            if not scene_id:
-                scene_id = str(uuid.uuid4())
-            
-            if seed is None:
-                import random
-                seed = random.randint(1, 99999)
-            
-            body = {
-                "clientContext": {
-                    "projectId": project_id,
-                    "tool": "PINHOLE",
-                    "userPaygateTier": user_paygate_tier
+        import uuid
+        import random
+        
+        if not scene_id:
+            scene_id = str(uuid.uuid4())
+        
+        if seed is None:
+            seed = random.randint(1, 99999)
+        
+        video_model_key = FlowClient._get_video_model_key(
+            model=model,
+            aspect_ratio=aspect_ratio,
+            has_start_image=False,
+            has_end_image=False,
+            has_reference_images=False
+        )
+        
+        body = {
+            "clientContext": {
+                "projectId": project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": user_paygate_tier
+            },
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
                 },
-                "requests": [{
-                    "aspectRatio": aspect_ratio,
-                    "seed": seed,
-                    "textInput": {
-                        "prompt": prompt
-                    },
-                    "videoModelKey": "veo_3_1_t2v_fast",
-                    "metadata": {
-                        "sceneId": scene_id
-                    }
-                }]
-            }
-            
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
-            
-            response = await asyncio.to_thread(
-                curl_requests.post,
-                GENERATE_VIDEO_URL,
-                headers=headers,
-                data=orjson.dumps(body),
-                impersonate=BROWSER,
-                timeout=TIMEOUT
-            )
-            
-            if response.status_code != 200:
-                raise GrokApiException(
-                    f"生成视频失败: {response.status_code}",
-                    "HTTP_ERROR",
-                    {"status": response.status_code}
+                "videoModelKey": video_model_key,
+                "metadata": {
+                    "sceneId": scene_id
+                }
+            }]
+        }
+        
+        headers = {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            "authorization": f"Bearer {access_token}",
+            "cache-control": "no-cache",
+            "content-type": "text/plain;charset=UTF-8",
+            "pragma": "no-cache",
+            "Referer": "https://labs.google/"
+        }
+        
+        # 重试逻辑处理 429 错误
+        for attempt in range(MAX_RETRY):
+            try:
+                response = await asyncio.to_thread(
+                    curl_requests.post,
+                    GENERATE_VIDEO_URL,
+                    headers=headers,
+                    data=orjson.dumps(body),
+                    impersonate=BROWSER,
+                    timeout=TIMEOUT
                 )
-            
-            data = response.json()
-            logger.debug(f"[Flow] 视频生成请求已提交: {data.get('operations', [{}])[0].get('operation', {}).get('name', 'unknown')}")
-            return data
-            
-        except curl_requests.RequestsError as e:
-            logger.error(f"[Flow] 网络错误: {e}")
-            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
-        except Exception as e:
-            logger.error(f"[Flow] 生成视频失败: {e}")
-            raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
+                
+                # 检查 429 错误
+                if response.status_code == 429:
+                    error_data = response.json() if response.content else {}
+                    error_info = error_data.get("error", {})
+                    if error_info.get("code") == 429 or error_info.get("status") == "RESOURCE_EXHAUSTED":
+                        if attempt < MAX_RETRY - 1:
+                            wait_time = RETRY_DELAY * (attempt + 1)
+                            logger.warning(f"[Flow] 遇到并发限制，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise GrokApiException(
+                                "生成视频失败: 达到并发限制，请稍后重试",
+                                "RATE_LIMIT_ERROR",
+                                {"status": 429, "error": error_data}
+                            )
+                
+                if response.status_code != 200:
+                    raise GrokApiException(
+                        f"生成视频失败: {response.status_code}",
+                        "HTTP_ERROR",
+                        {"status": response.status_code}
+                    )
+                
+                data = response.json()
+                logger.debug(f"[Flow] 视频生成请求已提交: {data.get('operations', [{}])[0].get('operation', {}).get('name', 'unknown')}")
+                return data
+                
+            except curl_requests.RequestsError as e:
+                if attempt < MAX_RETRY - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    logger.warning(f"[Flow] 网络错误，等待 {wait_time} 秒后重试: {e}")
+                    await asyncio.sleep(wait_time)
+                    continue
+                logger.error(f"[Flow] 网络错误: {e}")
+                raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+            except GrokApiException:
+                raise
+            except Exception as e:
+                logger.error(f"[Flow] 生成视频失败: {e}")
+                raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
     async def generate_video_reference(
@@ -410,80 +533,115 @@ class FlowClient:
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         seed: Optional[int] = None,
         user_paygate_tier: str = "PAYGATE_TIER_ONE",
-        video_model_key: str = "veo_3_0_r2v_fast"
+        model: str = "veo-3_1_fast"
     ) -> Dict[str, Any]:
         """生成视频（参考图片）"""
-        try:
-            import uuid
-            if not scene_id:
-                scene_id = str(uuid.uuid4())
-            
-            if seed is None:
-                import random
-                seed = random.randint(1, 99999)
-            
-            body = {
-                "clientContext": {
-                    "projectId": project_id,
-                    "tool": "PINHOLE",
-                    "userPaygateTier": user_paygate_tier
+        import uuid
+        import random
+        
+        if not scene_id:
+            scene_id = str(uuid.uuid4())
+        
+        if seed is None:
+            seed = random.randint(1, 99999)
+        
+        video_model_key = FlowClient._get_video_model_key(
+            model=model,
+            aspect_ratio=aspect_ratio,
+            has_start_image=False,
+            has_end_image=False,
+            has_reference_images=True
+        )
+        
+        body = {
+            "clientContext": {
+                "projectId": project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": user_paygate_tier
+            },
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
                 },
-                "requests": [{
-                    "aspectRatio": aspect_ratio,
-                    "seed": seed,
-                    "textInput": {
-                        "prompt": prompt
-                    },
-                    "videoModelKey": video_model_key,
-                    "referenceImages": [
-                        {
-                            "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
-                            "mediaId": media_id
-                        }
-                        for media_id in reference_image_ids
-                    ],
-                    "metadata": {
-                        "sceneId": scene_id
+                "videoModelKey": video_model_key,
+                "referenceImages": [
+                    {
+                        "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                        "mediaId": media_id
                     }
-                }]
-            }
-            
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
-            
-            response = await asyncio.to_thread(
-                curl_requests.post,
-                GENERATE_VIDEO_REFERENCE_URL,
-                headers=headers,
-                data=orjson.dumps(body),
-                impersonate=BROWSER,
-                timeout=TIMEOUT
-            )
-            
-            if response.status_code != 200:
-                raise GrokApiException(
-                    f"生成视频失败: {response.status_code}",
-                    "HTTP_ERROR",
-                    {"status": response.status_code}
+                    for media_id in reference_image_ids
+                ],
+                "metadata": {
+                    "sceneId": scene_id
+                }
+            }]
+        }
+        
+        headers = {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            "authorization": f"Bearer {access_token}",
+            "cache-control": "no-cache",
+            "content-type": "text/plain;charset=UTF-8",
+            "pragma": "no-cache",
+            "Referer": "https://labs.google/"
+        }
+        
+        # 重试逻辑处理 429 错误
+        for attempt in range(MAX_RETRY):
+            try:
+                response = await asyncio.to_thread(
+                    curl_requests.post,
+                    GENERATE_VIDEO_REFERENCE_URL,
+                    headers=headers,
+                    data=orjson.dumps(body),
+                    impersonate=BROWSER,
+                    timeout=TIMEOUT
                 )
-            
-            data = response.json()
-            logger.debug(f"[Flow] 参考图片视频生成请求已提交")
-            return data
-            
-        except curl_requests.RequestsError as e:
-            logger.error(f"[Flow] 网络错误: {e}")
-            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
-        except Exception as e:
-            logger.error(f"[Flow] 生成视频失败: {e}")
-            raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
+                
+                # 检查 429 错误
+                if response.status_code == 429:
+                    error_data = response.json() if response.content else {}
+                    error_info = error_data.get("error", {})
+                    if error_info.get("code") == 429 or error_info.get("status") == "RESOURCE_EXHAUSTED":
+                        if attempt < MAX_RETRY - 1:
+                            wait_time = RETRY_DELAY * (attempt + 1)
+                            logger.warning(f"[Flow] 遇到并发限制，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise GrokApiException(
+                                "生成视频失败: 达到并发限制，请稍后重试",
+                                "RATE_LIMIT_ERROR",
+                                {"status": 429, "error": error_data}
+                            )
+                
+                if response.status_code != 200:
+                    raise GrokApiException(
+                        f"生成视频失败: {response.status_code}",
+                        "HTTP_ERROR",
+                        {"status": response.status_code}
+                    )
+                
+                data = response.json()
+                logger.debug("[Flow] 参考图片视频生成请求已提交")
+                return data
+                
+            except curl_requests.RequestsError as e:
+                if attempt < MAX_RETRY - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    logger.warning(f"[Flow] 网络错误，等待 {wait_time} 秒后重试: {e}")
+                    await asyncio.sleep(wait_time)
+                    continue
+                logger.error(f"[Flow] 网络错误: {e}")
+                raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+            except GrokApiException:
+                raise
+            except Exception as e:
+                logger.error(f"[Flow] 生成视频失败: {e}")
+                raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
     async def generate_video_start(
@@ -495,76 +653,111 @@ class FlowClient:
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         seed: Optional[int] = None,
         user_paygate_tier: str = "PAYGATE_TIER_ONE",
-        video_model_key: str = "veo_3_1_i2v_s_fast_portrait"
+        model: str = "veo-3_1_fast"
     ) -> Dict[str, Any]:
         """生成视频（起始图片）"""
-        try:
-            import uuid
-            if not scene_id:
-                scene_id = str(uuid.uuid4())
-            
-            if seed is None:
-                import random
-                seed = random.randint(1, 99999)
-            
-            body = {
-                "clientContext": {
-                    "projectId": project_id,
-                    "tool": "PINHOLE",
-                    "userPaygateTier": user_paygate_tier
+        import uuid
+        import random
+        
+        if not scene_id:
+            scene_id = str(uuid.uuid4())
+        
+        if seed is None:
+            seed = random.randint(1, 99999)
+        
+        video_model_key = FlowClient._get_video_model_key(
+            model=model,
+            aspect_ratio=aspect_ratio,
+            has_start_image=True,
+            has_end_image=False,
+            has_reference_images=False
+        )
+        
+        body = {
+            "clientContext": {
+                "projectId": project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": user_paygate_tier
+            },
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
                 },
-                "requests": [{
-                    "aspectRatio": aspect_ratio,
-                    "seed": seed,
-                    "textInput": {
-                        "prompt": prompt
-                    },
-                    "videoModelKey": video_model_key,
-                    "startImage": {
-                        "mediaId": start_image_id
-                    },
-                    "metadata": {
-                        "sceneId": scene_id
-                    }
-                }]
-            }
-            
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
-            
-            response = await asyncio.to_thread(
-                curl_requests.post,
-                GENERATE_VIDEO_START_URL,
-                headers=headers,
-                data=orjson.dumps(body),
-                impersonate=BROWSER,
-                timeout=TIMEOUT
-            )
-            
-            if response.status_code != 200:
-                raise GrokApiException(
-                    f"生成视频失败: {response.status_code}",
-                    "HTTP_ERROR",
-                    {"status": response.status_code}
+                "videoModelKey": video_model_key,
+                "startImage": {
+                    "mediaId": start_image_id
+                },
+                "metadata": {
+                    "sceneId": scene_id
+                }
+            }]
+        }
+        
+        headers = {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            "authorization": f"Bearer {access_token}",
+            "cache-control": "no-cache",
+            "content-type": "text/plain;charset=UTF-8",
+            "pragma": "no-cache",
+            "Referer": "https://labs.google/"
+        }
+        
+        # 重试逻辑处理 429 错误
+        for attempt in range(MAX_RETRY):
+            try:
+                response = await asyncio.to_thread(
+                    curl_requests.post,
+                    GENERATE_VIDEO_START_URL,
+                    headers=headers,
+                    data=orjson.dumps(body),
+                    impersonate=BROWSER,
+                    timeout=TIMEOUT
                 )
-            
-            data = response.json()
-            logger.debug(f"[Flow] 起始图片视频生成请求已提交")
-            return data
-            
-        except curl_requests.RequestsError as e:
-            logger.error(f"[Flow] 网络错误: {e}")
-            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
-        except Exception as e:
-            logger.error(f"[Flow] 生成视频失败: {e}")
-            raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
+                
+                # 检查 429 错误
+                if response.status_code == 429:
+                    error_data = response.json() if response.content else {}
+                    error_info = error_data.get("error", {})
+                    if error_info.get("code") == 429 or error_info.get("status") == "RESOURCE_EXHAUSTED":
+                        if attempt < MAX_RETRY - 1:
+                            wait_time = RETRY_DELAY * (attempt + 1)
+                            logger.warning(f"[Flow] 遇到并发限制，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise GrokApiException(
+                                "生成视频失败: 达到并发限制，请稍后重试",
+                                "RATE_LIMIT_ERROR",
+                                {"status": 429, "error": error_data}
+                            )
+                
+                if response.status_code != 200:
+                    raise GrokApiException(
+                        f"生成视频失败: {response.status_code}",
+                        "HTTP_ERROR",
+                        {"status": response.status_code}
+                    )
+                
+                data = response.json()
+                logger.debug("[Flow] 起始图片视频生成请求已提交")
+                return data
+                
+            except curl_requests.RequestsError as e:
+                if attempt < MAX_RETRY - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    logger.warning(f"[Flow] 网络错误，等待 {wait_time} 秒后重试: {e}")
+                    await asyncio.sleep(wait_time)
+                    continue
+                logger.error(f"[Flow] 网络错误: {e}")
+                raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+            except GrokApiException:
+                raise
+            except Exception as e:
+                logger.error(f"[Flow] 生成视频失败: {e}")
+                raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
     async def generate_video_start_end(
@@ -577,79 +770,114 @@ class FlowClient:
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         seed: Optional[int] = None,
         user_paygate_tier: str = "PAYGATE_TIER_ONE",
-        video_model_key: str = "veo_3_1_i2v_s_fast_fl"
+        model: str = "veo-3_1_fast"
     ) -> Dict[str, Any]:
         """生成视频（起始和结束图片）"""
-        try:
-            import uuid
-            if not scene_id:
-                scene_id = str(uuid.uuid4())
-            
-            if seed is None:
-                import random
-                seed = random.randint(1, 99999)
-            
-            body = {
-                "clientContext": {
-                    "projectId": project_id,
-                    "tool": "PINHOLE",
-                    "userPaygateTier": user_paygate_tier
+        import uuid
+        import random
+        
+        if not scene_id:
+            scene_id = str(uuid.uuid4())
+        
+        if seed is None:
+            seed = random.randint(1, 99999)
+        
+        video_model_key = FlowClient._get_video_model_key(
+            model=model,
+            aspect_ratio=aspect_ratio,
+            has_start_image=True,
+            has_end_image=True,
+            has_reference_images=False
+        )
+        
+        body = {
+            "clientContext": {
+                "projectId": project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": user_paygate_tier
+            },
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
                 },
-                "requests": [{
-                    "aspectRatio": aspect_ratio,
-                    "seed": seed,
-                    "textInput": {
-                        "prompt": prompt
-                    },
-                    "videoModelKey": video_model_key,
-                    "startImage": {
-                        "mediaId": start_image_id
-                    },
-                    "endImage": {
-                        "mediaId": end_image_id
-                    },
-                    "metadata": {
-                        "sceneId": scene_id
-                    }
-                }]
-            }
-            
-            headers = {
-                "accept": "*/*",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-                "authorization": f"Bearer {access_token}",
-                "cache-control": "no-cache",
-                "content-type": "text/plain;charset=UTF-8",
-                "pragma": "no-cache",
-                "Referer": "https://labs.google/"
-            }
-            
-            response = await asyncio.to_thread(
-                curl_requests.post,
-                GENERATE_VIDEO_START_END_URL,
-                headers=headers,
-                data=orjson.dumps(body),
-                impersonate=BROWSER,
-                timeout=TIMEOUT
-            )
-            
-            if response.status_code != 200:
-                raise GrokApiException(
-                    f"生成视频失败: {response.status_code}",
-                    "HTTP_ERROR",
-                    {"status": response.status_code}
+                "videoModelKey": video_model_key,
+                "startImage": {
+                    "mediaId": start_image_id
+                },
+                "endImage": {
+                    "mediaId": end_image_id
+                },
+                "metadata": {
+                    "sceneId": scene_id
+                }
+            }]
+        }
+        
+        headers = {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            "authorization": f"Bearer {access_token}",
+            "cache-control": "no-cache",
+            "content-type": "text/plain;charset=UTF-8",
+            "pragma": "no-cache",
+            "Referer": "https://labs.google/"
+        }
+        
+        # 重试逻辑处理 429 错误
+        for attempt in range(MAX_RETRY):
+            try:
+                response = await asyncio.to_thread(
+                    curl_requests.post,
+                    GENERATE_VIDEO_START_END_URL,
+                    headers=headers,
+                    data=orjson.dumps(body),
+                    impersonate=BROWSER,
+                    timeout=TIMEOUT
                 )
-            
-            data = response.json()
-            logger.debug(f"[Flow] 起始结束图片视频生成请求已提交")
-            return data
-            
-        except curl_requests.RequestsError as e:
-            logger.error(f"[Flow] 网络错误: {e}")
-            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
-        except Exception as e:
-            logger.error(f"[Flow] 生成视频失败: {e}")
-            raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
+                
+                # 检查 429 错误
+                if response.status_code == 429:
+                    error_data = response.json() if response.content else {}
+                    error_info = error_data.get("error", {})
+                    if error_info.get("code") == 429 or error_info.get("status") == "RESOURCE_EXHAUSTED":
+                        if attempt < MAX_RETRY - 1:
+                            wait_time = RETRY_DELAY * (attempt + 1)
+                            logger.warning(f"[Flow] 遇到并发限制，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise GrokApiException(
+                                "生成视频失败: 达到并发限制，请稍后重试",
+                                "RATE_LIMIT_ERROR",
+                                {"status": 429, "error": error_data}
+                            )
+                
+                if response.status_code != 200:
+                    raise GrokApiException(
+                        f"生成视频失败: {response.status_code}",
+                        "HTTP_ERROR",
+                        {"status": response.status_code}
+                    )
+                
+                data = response.json()
+                logger.debug("[Flow] 起始结束图片视频生成请求已提交")
+                return data
+                
+            except curl_requests.RequestsError as e:
+                if attempt < MAX_RETRY - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    logger.warning(f"[Flow] 网络错误，等待 {wait_time} 秒后重试: {e}")
+                    await asyncio.sleep(wait_time)
+                    continue
+                logger.error(f"[Flow] 网络错误: {e}")
+                raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+            except GrokApiException:
+                raise
+            except Exception as e:
+                logger.error(f"[Flow] 生成视频失败: {e}")
+                raise GrokApiException(f"生成视频失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
     async def check_video_status(
@@ -763,6 +991,62 @@ class FlowClient:
         except Exception as e:
             logger.error(f"[Flow] 下载图片失败: {e}")
             raise GrokApiException(f"下载图片失败: {e}", "REQUEST_ERROR") from e
+
+    @staticmethod
+    async def download_video(url: str) -> Tuple[bytes, str]:
+        """下载视频
+        
+        Args:
+            url: 视频 URL
+            
+        Returns:
+            (视频字节数据, MIME 类型)
+        """
+        try:
+            headers = {
+                "accept": "*/*",
+                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+            
+            response = await asyncio.to_thread(
+                curl_requests.get,
+                url,
+                headers=headers,
+                impersonate=BROWSER,
+                timeout=TIMEOUT * 3  # 视频下载可能需要更长时间
+            )
+            
+            if response.status_code != 200:
+                raise GrokApiException(
+                    f"下载视频失败: {response.status_code}",
+                    "HTTP_ERROR",
+                    {"status": response.status_code}
+                )
+            
+            # 检测 MIME 类型
+            content_type = response.headers.get("content-type", "video/mp4")
+            if "video/" in content_type:
+                mime_type = content_type
+            else:
+                # 根据内容判断
+                content = response.content[:12]
+                if content.startswith(b'\x00\x00\x00\x20ftyp'):
+                    mime_type = "video/mp4"
+                elif content.startswith(b'RIFF') and b'WEBM' in content:
+                    mime_type = "video/webm"
+                else:
+                    mime_type = "video/mp4"
+            
+            logger.debug(f"[Flow] 视频下载成功: {len(response.content)} bytes, {mime_type}")
+            return response.content, mime_type
+            
+        except curl_requests.RequestsError as e:
+            logger.error(f"[Flow] 网络错误: {e}")
+            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+        except Exception as e:
+            logger.error(f"[Flow] 下载视频失败: {e}")
+            raise GrokApiException(f"下载视频失败: {e}", "REQUEST_ERROR") from e
 
     @staticmethod
     async def upload_image(
@@ -914,7 +1198,7 @@ class FlowClient:
                 )
             
             data = response.json()
-            logger.debug(f"[Flow] 图片生成成功")
+            logger.debug("[Flow] 图片生成成功")
             return data
             
         except curl_requests.RequestsError as e:

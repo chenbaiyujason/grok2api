@@ -4,6 +4,8 @@ import toml
 from pathlib import Path
 from typing import Dict, Any, Optional, Literal
 
+from app.core.env import env
+
 
 # 默认配置
 DEFAULT_FLOW = {
@@ -61,8 +63,18 @@ class ConfigManager:
         """加载配置节"""
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
-                config = toml.load(f)[section]
-            return config
+                config = toml.load(f)
+            
+            # 如果配置节不存在，使用默认值并更新配置文件
+            if section not in config:
+                default_config = DEFAULT_FLOW.copy() if section == "flow" else DEFAULT_GLOBAL.copy()
+                config[section] = default_config
+                # 保存更新后的配置
+                with open(self.config_path, "w", encoding="utf-8") as f:
+                    toml.dump(config, f)
+                return default_config
+            
+            return config[section]
         except Exception as e:
             raise Exception(f"[Setting] 配置加载失败: {e}") from e
     
@@ -111,6 +123,17 @@ class ConfigManager:
             await self._save_file(updates)
         
         await self.reload()
+    
+    def get_session_token(self) -> str:
+        """获取 session_token，优先使用管理后台配置，如果没有则使用环境变量"""
+        # 优先使用管理后台配置的 session_token
+        session_token = self.flow_config.get("session_token", "").strip()
+        if session_token:
+            return session_token
+        
+        # 如果管理后台没有配置，则使用环境变量
+        env_token = env.flow_session_token or ""
+        return env_token.strip()
 
 
 # 全局实例

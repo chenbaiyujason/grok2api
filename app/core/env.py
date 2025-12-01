@@ -36,6 +36,11 @@ class Env:
         """R2 公开访问 URL"""
         return os.getenv("R2_PUBLIC_URL")
 
+    @property
+    def flow_session_token(self) -> Optional[str]:
+        """Flow Session Token（默认值，从环境变量读取）"""
+        return os.getenv("FLOW_SESSION_TOKEN")
+
 
 # 全局实例
 env = Env()

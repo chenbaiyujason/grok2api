@@ -1,11 +1,11 @@
 """媒体生成接口 - Flow API 视频和图片生成"""
 
 import time
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-
 import base64
+import uuid
+from typing import Dict, Any, Optional, List, Literal
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
 
 from app.core.config import setting
 from app.core.logger import logger
@@ -13,6 +13,7 @@ from app.core.auth import auth_manager
 from app.services.flow.client import FlowClient
 from app.services.flow.image_cache import image_upload_cache
 from app.core.exception import GrokApiException
+from app.core.r2 import upload_fileobj, get_public_url
 
 
 router = APIRouter(tags=["媒体生成"])
@@ -34,8 +35,9 @@ class VideoGenerateRequest(BaseModel):
     """视频生成请求"""
     prompt: str
     images: Optional[List[VideoImageContent]] = Field(default=None, description="图片列表")
-    aspect_ratio: Optional[str] = "VIDEO_ASPECT_RATIO_LANDSCAPE"
+    aspect_ratio: Optional[Literal["VIDEO_ASPECT_RATIO_LANDSCAPE", "VIDEO_ASPECT_RATIO_PORTRAIT"]] = "VIDEO_ASPECT_RATIO_LANDSCAPE"
     seed: Optional[int] = None
+    model: Optional[Literal["veo-3_1_fast", "veo-3_1_relaxed", "veo-3_1_quality"]] = "veo-3_1_fast"
 
 
 class VideoStatusRequest(BaseModel):
@@ -48,8 +50,9 @@ class ImageGenerateRequest(BaseModel):
     """图片生成请求"""
     prompt: str
     image: Optional[str] = None  # 图片 URL，如果提供则为图生图
-    aspect_ratio: Optional[str] = "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    aspect_ratio: Optional[Literal["IMAGE_ASPECT_RATIO_LANDSCAPE", "IMAGE_ASPECT_RATIO_PORTRAIT"]] = "IMAGE_ASPECT_RATIO_LANDSCAPE"
     seed: Optional[int] = None
+    model: Optional[str] = "GEM_PIX_2"
 
 
 async def _get_media_id_from_url(url: str, access_token: str, aspect_ratio: str) -> str:
@@ -81,6 +84,59 @@ async def _get_media_id_from_url(url: str, access_token: str, aspect_ratio: str)
     return media_id
 
 
+async def _upload_to_r2(file_url: str, file_type: str = "image") -> Optional[str]:
+    """下载文件并上传到 R2
+    
+    Args:
+        file_url: 文件 URL
+        file_type: 文件类型 ("image" 或 "video")
+        
+    Returns:
+        R2 公开链接，如果上传失败或未配置则返回 None
+    """
+    try:
+        from app.core.env import env
+        
+        # 检查 R2 配置
+        if not all([env.r2_endpoint_url, env.r2_access_key_id, env.r2_secret_access_key, env.r2_public_url]):
+            logger.debug("[R2] R2 未配置，跳过上传")
+            return None
+        
+        # 下载文件
+        if file_type == "image":
+            file_bytes, mime_type = await FlowClient.download_image(file_url)
+        else:
+            # 下载视频
+            file_bytes, mime_type = await FlowClient.download_video(file_url)
+        
+        # 生成 R2 对象键
+        file_ext = ".jpg" if file_type == "image" else ".mp4"
+        if "image/png" in mime_type:
+            file_ext = ".png"
+        elif "image/webp" in mime_type:
+            file_ext = ".webp"
+        
+        object_key = f"{file_type}s/{uuid.uuid4()}{file_ext}"
+        
+        # 上传到 R2
+        await upload_fileobj(file_bytes, object_key, content_type=mime_type)
+        logger.debug(f"[R2] 文件上传成功: {object_key}")
+        
+        # 获取公开链接
+        r2_url = get_public_url(object_key)
+        logger.debug(f"[R2] 公开链接: {r2_url}")
+        
+        return r2_url
+        
+    except ValueError as e:
+        # R2 未配置
+        logger.debug(f"[R2] R2 未配置: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"[R2] 上传文件失败: {e}")
+        return None
+
+
 @router.post("/v1/video/generations")
 async def generate_video(
     request: VideoGenerateRequest,
@@ -91,7 +147,7 @@ async def generate_video(
         logger.debug(f"[Video] 生成视频请求: {request.prompt[:50]}...")
         
         # 获取 session_token
-        session_token = setting.flow_config.get("session_token", "")
+        session_token = setting.get_session_token()
         if not session_token:
             raise HTTPException(
                 status_code=400,
@@ -140,7 +196,8 @@ async def generate_video(
                 start_image_id=first_frame_id,
                 end_image_id=last_frame_id,
                 aspect_ratio=request.aspect_ratio,
-                seed=request.seed
+                seed=request.seed,
+                model=request.model
             )
         elif first_frame_id:
             # 起始图片
@@ -150,7 +207,8 @@ async def generate_video(
                 prompt=request.prompt,
                 start_image_id=first_frame_id,
                 aspect_ratio=request.aspect_ratio,
-                seed=request.seed
+                seed=request.seed,
+                model=request.model
             )
         elif reference_image_ids:
             # 参考图片
@@ -160,7 +218,8 @@ async def generate_video(
                 prompt=request.prompt,
                 reference_image_ids=reference_image_ids,
                 aspect_ratio=request.aspect_ratio,
-                seed=request.seed
+                seed=request.seed,
+                model=request.model
             )
         else:
             # 文生视频
@@ -169,7 +228,8 @@ async def generate_video(
                 project_id=project_id,
                 prompt=request.prompt,
                 aspect_ratio=request.aspect_ratio,
-                seed=request.seed
+                seed=request.seed,
+                model=request.model
             )
         
         operations = result.get("operations", [])
@@ -242,7 +302,7 @@ async def get_video_status(
         logger.debug(f"[Video] 查询状态: {generation_id}")
         
         # 获取 session_token
-        session_token = setting.flow_config.get("session_token", "")
+        session_token = setting.get_session_token()
         if not session_token:
             raise HTTPException(
                 status_code=400,
@@ -301,10 +361,21 @@ async def get_video_status(
             metadata = operation_data.get("metadata", {})
             video_data = metadata.get("video", {})
             
+            fife_url = video_data.get("fifeUrl")
+            
+            # 上传到 R2
+            r2_url = None
+            if fife_url:
+                try:
+                    r2_url = await _upload_to_r2(fife_url, "video")
+                except Exception as e:
+                    logger.warning(f"[Video] 上传到 R2 失败: {e}")
+            
             response.update({
                 "video": {
                     "media_generation_id": operation_result.get("mediaGenerationId"),
-                    "fife_url": video_data.get("fifeUrl"),
+                    "fife_url": fife_url,
+                    "url": r2_url or fife_url,  # 优先返回 R2 链接
                     "serving_base_uri": video_data.get("servingBaseUri"),
                     "seed": video_data.get("seed"),
                     "model": video_data.get("model"),
@@ -353,7 +424,7 @@ async def get_credits(
         logger.debug("[Video] 查询余额")
         
         # 获取 session_token
-        session_token = setting.flow_config.get("session_token", "")
+        session_token = setting.get_session_token()
         if not session_token:
             raise HTTPException(
                 status_code=400,
@@ -393,16 +464,16 @@ async def get_credits(
         raise
     except Exception as e:
         logger.error(f"[Video] 查询余额异常: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": {
-                        "message": f"查询余额失败: {e}",
-                        "type": "internal_error",
-                        "code": "CREDITS_ERROR"
-                    }
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "message": f"查询余额失败: {e}",
+                    "type": "internal_error",
+                    "code": "CREDITS_ERROR"
                 }
-            )
+            }
+        )
 
 
 @router.post("/v1/images/generations")
@@ -415,7 +486,7 @@ async def generate_image(
         logger.debug(f"[Image] 生成图片请求: {request.prompt[:50]}...")
         
         # 获取 session_token
-        session_token = setting.flow_config.get("session_token", "")
+        session_token = setting.get_session_token()
         if not session_token:
             raise HTTPException(
                 status_code=400,
@@ -495,6 +566,14 @@ async def generate_image(
         
         logger.debug(f"[Image] 图片生成成功: {media_generation_id[:50] if media_generation_id else 'unknown'}...")
         
+        # 上传到 R2
+        r2_url = None
+        if fife_url:
+            try:
+                r2_url = await _upload_to_r2(fife_url, "image")
+            except Exception as e:
+                logger.warning(f"[Image] 上传到 R2 失败: {e}")
+        
         response = {
             "id": media_generation_id,
             "object": "image.generation",
@@ -503,14 +582,15 @@ async def generate_image(
             "project_id": project_id,
             "media_generation_id": media_generation_id,
             "fife_url": fife_url,
+            "url": r2_url or fife_url,  # 优先返回 R2 链接
             "aspect_ratio": image_data_obj.get("aspectRatio"),
             "seed": image_data_obj.get("seed"),
             "model": image_data_obj.get("modelNameType")
         }
         
         # 如果返回了 base64 编码的图片，也包含在响应中
-        if encoded_image:
-            response["b64_json"] = encoded_image
+        # if encoded_image:
+        #     response["b64_json"] = encoded_image
         
         return response
         

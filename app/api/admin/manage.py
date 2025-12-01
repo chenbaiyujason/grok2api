@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from app.core.config import setting
 from app.core.logger import logger
+from app.services.flow.client import FlowClient
+from app.core.exception import GrokApiException
 
 
 router = APIRouter(tags=["管理"])
@@ -146,3 +148,49 @@ async def update_settings(request: UpdateSettingsRequest, _: bool = Depends(veri
     except Exception as e:
         logger.error(f"[Admin] 更新配置失败: {e}")
         raise HTTPException(status_code=500, detail={"error": f"更新失败: {e}", "code": "UPDATE_SETTINGS_ERROR"})
+
+
+@router.get("/api/credits")
+async def get_credits(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
+    """获取余额信息（管理后台专用）"""
+    try:
+        logger.debug("[Admin] 查询余额")
+        
+        # 获取 session_token
+        session_token = setting.get_session_token()
+        if not session_token:
+            return {
+                "success": False,
+                "message": "Session token 未配置",
+                "credits": 0,
+                "user_paygate_tier": ""
+            }
+        
+        # 获取 access_token
+        access_token = await FlowClient.get_access_token(session_token)
+        
+        # 获取余额
+        credits_data = await FlowClient.get_credits(access_token)
+        
+        return {
+            "success": True,
+            "credits": credits_data.get("credits", 0),
+            "user_paygate_tier": credits_data.get("userPaygateTier", "")
+        }
+        
+    except GrokApiException as e:
+        logger.error(f"[Admin] 查询余额失败: {e}")
+        return {
+            "success": False,
+            "message": str(e),
+            "credits": 0,
+            "user_paygate_tier": ""
+        }
+    except Exception as e:
+        logger.error(f"[Admin] 查询余额异常: {e}")
+        return {
+            "success": False,
+            "message": f"查询余额失败: {e}",
+            "credits": 0,
+            "user_paygate_tier": ""
+        }

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN" class="h-full">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,33 +8,79 @@
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @keyframes slide-up{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
-        .animate-slide-up{animation:slide-up .3s ease-out}
-        .cfg-label{font-size:0.875rem;font-weight:500;color:hsl(0 0% 45.1%);margin-bottom:0.5rem;display:flex;align-items:center;gap:0.25rem}
-        .cfg-input{display:flex;height:2.25rem;width:100%;border-radius:0.375rem;border:1px solid hsl(0 0% 89%);background-color:hsl(0 0% 100%);padding:0.5rem 0.75rem;font-size:0.875rem}
-        .help-icon{display:inline-flex;align-items:center;justify-content:center;width:0.875rem;height:0.875rem;border-radius:9999px;border:1px solid hsl(0 0% 45.1%);color:hsl(0 0% 45.1%);cursor:help;font-size:10px;line-height:1}
+        @keyframes slide-up {
+            from {
+                transform: translateY(100%);
+                opacity: 0
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1
+            }
+        }
+
+        .animate-slide-up {
+            animation: slide-up .3s ease-out
+        }
+
+        .cfg-label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: hsl(0 0% 45.1%);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem
+        }
+
+        .cfg-input {
+            display: flex;
+            height: 2.25rem;
+            width: 100%;
+            border-radius: 0.375rem;
+            border: 1px solid hsl(0 0% 89%);
+            background-color: hsl(0 0% 100%);
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem
+        }
+
+        .help-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 0.875rem;
+            height: 0.875rem;
+            border-radius: 9999px;
+            border: 1px solid hsl(0 0% 45.1%);
+            color: hsl(0 0% 45.1%);
+            cursor: help;
+            font-size: 10px;
+            line-height: 1
+        }
     </style>
     <script>
-        tailwind.config={theme:{extend:{colors:{border:"hsl(0 0% 89%)",input:"hsl(0 0% 89%)",ring:"hsl(0 0% 3.9%)",background:"hsl(0 0% 100%)",foreground:"hsl(0 0% 3.9%)",primary:{DEFAULT:"hsl(0 0% 9%)",foreground:"hsl(0 0% 98%)"},secondary:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 9%)"},muted:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 45.1%)"},accent:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 9%)"},destructive:{DEFAULT:"hsl(0 84.2% 60.2%)",foreground:"hsl(0 0% 98%)"}}}}}
+        tailwind.config = { theme: { extend: { colors: { border: "hsl(0 0% 89%)", input: "hsl(0 0% 89%)", ring: "hsl(0 0% 3.9%)", background: "hsl(0 0% 100%)", foreground: "hsl(0 0% 3.9%)", primary: { DEFAULT: "hsl(0 0% 9%)", foreground: "hsl(0 0% 98%)" }, secondary: { DEFAULT: "hsl(0 0% 96.1%)", foreground: "hsl(0 0% 9%)" }, muted: { DEFAULT: "hsl(0 0% 96.1%)", foreground: "hsl(0 0% 45.1%)" }, accent: { DEFAULT: "hsl(0 0% 96.1%)", foreground: "hsl(0 0% 9%)" }, destructive: { DEFAULT: "hsl(0 84.2% 60.2%)", foreground: "hsl(0 0% 98%)" } } } } }
     </script>
 </head>
+
 <body class="h-full bg-background text-foreground antialiased">
     <!-- 导航栏 -->
-    <header class="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header
+        class="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div class="mx-auto flex h-14 max-w-7xl items-center px-6">
             <div class="mr-4 flex items-baseline gap-3">
                 <span class="font-bold text-xl">Flow2API</span>
                 <span class="text-xs text-gray-400">视频生成服务</span>
             </div>
             <div class="flex flex-1 items-center justify-end">
-                <button
-                    onclick="logout()"
-                    class="inline-flex items-center justify-center text-xs transition-colors hover:bg-accent hover:text-accent-foreground h-7 px-2.5 gap-1"
-                >
-                    <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                        <polyline points="16 17 21 12 16 7"/>
-                        <line x1="21" y1="12" x2="9" y2="12"/>
+                <button onclick="logout()"
+                    class="inline-flex items-center justify-center text-xs transition-colors hover:bg-accent hover:text-accent-foreground h-7 px-2.5 gap-1">
+                    <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
                     退出
                 </button>
@@ -46,7 +93,8 @@
         <div>
             <div class="flex items-center justify-between mb-6">
                 <h2 class="text-xl font-bold">Flow 配置</h2>
-                <button onclick="saveFlowSettings()" class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-secondary text-secondary-foreground hover:bg-black hover:text-white h-9 px-4 transition-colors">保存配置</button>
+                <button onclick="saveFlowSettings()"
+                    class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-secondary text-secondary-foreground hover:bg-black hover:text-white h-9 px-4 transition-colors">保存配置</button>
             </div>
             <div class="grid gap-4 lg:grid-cols-2">
                 <!-- 系统设置 -->
@@ -58,12 +106,19 @@
                             <input id="cfgAdminUser" class="cfg-input" placeholder="admin">
                         </div>
                         <div>
-                            <label class="cfg-label">登陆密码<span class="help-icon" title="登录管理后台的密码，留空表示不修改当前密码">?</span></label>
+                            <label class="cfg-label">登陆密码<span class="help-icon"
+                                    title="登录管理后台的密码，留空表示不修改当前密码">?</span></label>
                             <input id="cfgAdminPass" type="password" class="cfg-input" placeholder="留空则不修改">
                         </div>
                         <div>
-                            <label class="cfg-label">日志级别<span class="help-icon" title="日志详细程度。DEBUG：最详细 | INFO：一般信息 | WARNING：警告 | ERROR：仅错误">?</span></label>
-                            <select id="cfgLogLevel" class="cfg-input"><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
+                            <label class="cfg-label">日志级别<span class="help-icon"
+                                    title="日志详细程度。DEBUG：最详细 | INFO：一般信息 | WARNING：警告 | ERROR：仅错误">?</span></label>
+                            <select id="cfgLogLevel" class="cfg-input">
+                                <option>DEBUG</option>
+                                <option>INFO</option>
+                                <option>WARNING</option>
+                                <option>ERROR</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -75,9 +130,28 @@
                         <div>
                             <label class="cfg-label">
                                 Session Token
-                                <span class="help-icon" title="从浏览器 Cookie 中获取的 __Secure-next-auth.session-token 值">?</span>
+                                <span class="help-icon"
+                                    title="从浏览器 Cookie 中获取的 __Secure-next-auth.session-token 值">?</span>
                             </label>
-                            <input id="cfgSessionToken" type="password" class="cfg-input" placeholder="__Secure-next-auth.session-token">
+                            <input id="cfgSessionToken" type="password" class="cfg-input"
+                                placeholder="__Secure-next-auth.session-token">
+                        </div>
+                        <div>
+                            <label class="cfg-label">账户余额</label>
+                            <div class="flex gap-2">
+                                <input id="creditsDisplay" readonly
+                                    class="flex h-9 flex-1 rounded-md border border-input bg-muted px-3 py-2 text-sm"
+                                    placeholder="点击刷新按钮查询余额">
+                                <button onclick="refreshCredits()"
+                                    class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-secondary text-secondary-foreground hover:bg-black hover:text-white h-9 px-4 transition-colors">
+                                    <svg class="h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2">
+                                        <path
+                                            d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0118.8-4.3M22 12.5a10 10 0 01-18.8 4.2" />
+                                    </svg>
+                                    刷新余额
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -86,15 +160,17 @@
     </main>
 
     <script>
-        const $=id=>document.getElementById(id),
-        apiRequest=async(url,options={})=>{const token=localStorage.getItem('adminToken');if(!token&&!url.includes('/login'))return location.href='/login';const headers={'Content-Type':'application/json',...options.headers};if(token)headers['Authorization']=`Bearer ${token}`;try{const r=await fetch(url,{...options,headers});if(r.status===401){localStorage.removeItem('adminToken');location.href='/login';return null}return r}catch(e){console.error('请求失败:',e);return null}},
-        checkAuth=()=>{const token=localStorage.getItem('adminToken');if(!token)return location.href='/login'},
-        showToast=(m,t='info')=>{const d=document.createElement('div'),bc={success:'bg-green-600',error:'bg-destructive',info:'bg-primary'};d.className=`fixed bottom-4 right-4 ${bc[t]||bc.info} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium z-50 animate-slide-up`;d.textContent=m;document.body.appendChild(d);setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.parentNode&&document.body.removeChild(d),300)},2000)},
-        logout=async()=>{if(!confirm('确定要退出登录吗?'))return;try{await apiRequest('/api/logout',{method:'POST'})}catch(e){console.error('登出失败:',e)}finally{localStorage.removeItem('adminToken');location.href='/login'}},
-        loadSettings=async()=>{try{const r=await apiRequest('/api/settings');if(!r)return;const d=await r.json();if(d.success){const g=d.data.global,f=d.data.flow;$('cfgAdminUser').value=g.admin_username||'';$('cfgAdminPass').value='';$('cfgLogLevel').value=g.log_level||'DEBUG';$('cfgSessionToken').value=f.session_token||''}}catch(e){console.error('加载配置失败:',e);showToast('加载配置失败','error')}},
-        saveGlobalSettings=async()=>{const gc={admin_username:$('cfgAdminUser').value,log_level:$('cfgLogLevel').value};if($('cfgAdminPass').value)gc.admin_password=$('cfgAdminPass').value;try{const r=await apiRequest('/api/settings');if(!r)return;const d=await r.json();if(!d.success)return showToast('加载配置失败','error');const s=await apiRequest('/api/settings',{method:'POST',body:JSON.stringify({global_config:gc,flow_config:d.data.flow})});if(!s)return;const sd=await s.json();sd.success?(showToast('全局配置保存成功','success'),$('cfgAdminPass').value=''):showToast('保存失败: '+(sd.error||'未知错误'),'error')}catch(e){showToast('保存失败: '+e.message,'error')}},
-        saveFlowSettings=async()=>{const fc={session_token:$('cfgSessionToken').value.trim()};try{const r=await apiRequest('/api/settings');if(!r)return;const d=await r.json();if(!d.success)return showToast('加载配置失败','error');const s=await apiRequest('/api/settings',{method:'POST',body:JSON.stringify({global_config:d.data.global,flow_config:fc})});if(!s)return;const sd=await s.json();sd.success?showToast('Flow配置保存成功','success'):showToast('保存失败: '+(sd.error||'未知错误'),'error')}catch(e){showToast('保存失败: '+e.message,'error')}};
-        window.addEventListener('DOMContentLoaded',()=>{checkAuth();loadSettings()});
+        const $ = id => document.getElementById(id),
+            apiRequest = async (url, options = {}) => { const token = localStorage.getItem('adminToken'); if (!token && !url.includes('/login')) return location.href = '/login'; const headers = { 'Content-Type': 'application/json', ...options.headers }; if (token) headers['Authorization'] = `Bearer ${token}`; try { const r = await fetch(url, { ...options, headers }); if (r.status === 401) { localStorage.removeItem('adminToken'); location.href = '/login'; return null } return r } catch (e) { console.error('请求失败:', e); return null } },
+            checkAuth = () => { const token = localStorage.getItem('adminToken'); if (!token) return location.href = '/login' },
+            showToast = (m, t = 'info') => { const d = document.createElement('div'), bc = { success: 'bg-green-600', error: 'bg-destructive', info: 'bg-primary' }; d.className = `fixed bottom-4 right-4 ${bc[t] || bc.info} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium z-50 animate-slide-up`; d.textContent = m; document.body.appendChild(d); setTimeout(() => { d.style.opacity = '0'; d.style.transition = 'opacity .3s'; setTimeout(() => d.parentNode && document.body.removeChild(d), 300) }, 2000) },
+            logout = async () => { if (!confirm('确定要退出登录吗?')) return; try { await apiRequest('/api/logout', { method: 'POST' }) } catch (e) { console.error('登出失败:', e) } finally { localStorage.removeItem('adminToken'); location.href = '/login' } },
+            loadSettings = async () => { try { const r = await apiRequest('/api/settings'); if (!r) return; const d = await r.json(); if (d.success) { const g = d.data.global, f = d.data.flow; $('cfgAdminUser').value = g.admin_username || ''; $('cfgAdminPass').value = ''; $('cfgLogLevel').value = g.log_level || 'DEBUG'; $('cfgSessionToken').value = f.session_token || '' } } catch (e) { console.error('加载配置失败:', e); showToast('加载配置失败', 'error') } },
+            saveGlobalSettings = async () => { const gc = { admin_username: $('cfgAdminUser').value, log_level: $('cfgLogLevel').value }; if ($('cfgAdminPass').value) gc.admin_password = $('cfgAdminPass').value; try { const r = await apiRequest('/api/settings'); if (!r) return; const d = await r.json(); if (!d.success) return showToast('加载配置失败', 'error'); const s = await apiRequest('/api/settings', { method: 'POST', body: JSON.stringify({ global_config: gc, flow_config: d.data.flow }) }); if (!s) return; const sd = await s.json(); sd.success ? (showToast('全局配置保存成功', 'success'), $('cfgAdminPass').value = '') : showToast('保存失败: ' + (sd.error || '未知错误'), 'error') } catch (e) { showToast('保存失败: ' + e.message, 'error') } },
+            saveFlowSettings = async () => { const fc = { session_token: $('cfgSessionToken').value.trim() }; try { const r = await apiRequest('/api/settings'); if (!r) return; const d = await r.json(); if (!d.success) return showToast('加载配置失败', 'error'); const s = await apiRequest('/api/settings', { method: 'POST', body: JSON.stringify({ global_config: d.data.global, flow_config: fc }) }); if (!s) return; const sd = await s.json(); sd.success ? showToast('Flow配置保存成功', 'success') : showToast('保存失败: ' + (sd.error || '未知错误'), 'error') } catch (e) { showToast('保存失败: ' + e.message, 'error') } },
+            refreshCredits = async () => { const btn = event.target.closest('button'); const originalHtml = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<svg class="h-4 w-4 mr-1 animate-spin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>查询中...'; try { const r = await apiRequest('/api/credits'); if (!r) return; const d = await r.json(); if (d.success && d.credits !== undefined) { $('creditsDisplay').value = `${d.credits} 积分${d.user_paygate_tier ? ' (' + d.user_paygate_tier + ')' : ''}`; showToast('余额查询成功', 'success') } else { const errorMsg = d.message || '查询失败'; $('creditsDisplay').value = errorMsg; showToast('查询失败: ' + errorMsg, 'error') } } catch (e) { $('creditsDisplay').value = '查询失败'; showToast('查询失败: ' + e.message, 'error') } finally { btn.disabled = false; btn.innerHTML = originalHtml } };
+        window.addEventListener('DOMContentLoaded', () => { checkAuth(); loadSettings() });
     </script>
 </body>
+
 </html>

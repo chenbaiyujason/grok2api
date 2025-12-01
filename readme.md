@@ -80,16 +80,20 @@ services:
       ## MySQL格式: mysql://user:password@host:port/database
       ## Redis格式: redis://host:port/db 或 redis://user:password@host:port/db (SSL: rediss://)
 
+      # =====Flow Session Token (默认值，管理后台没有配置时使用)=====
+      # - FLOW_SESSION_TOKEN=your_session_token_here
+
 volumes:
   grok_data:
 ```
 
 ### 环境变量说明
 
-| 环境变量      | 必填 | 说明                                    | 示例 |
-|---------------|------|-----------------------------------------|------|
-| STORAGE_MODE  | 否   | 存储模式：file/mysql/redis               | file |
-| DATABASE_URL  | 否   | 数据库连接URL（MySQL/Redis模式时必需）   | mysql://user:pass@host:3306/db |
+| 环境变量          | 必填 | 说明                                    | 示例 |
+|-------------------|------|-----------------------------------------|------|
+| STORAGE_MODE      | 否   | 存储模式：file/mysql/redis               | file |
+| DATABASE_URL      | 否   | 数据库连接URL（MySQL/Redis模式时必需）   | mysql://user:pass@host:3306/db |
+| FLOW_SESSION_TOKEN| 否   | Flow Session Token（默认值，管理后台没有配置时使用） | your_session_token_here |
 
 **存储模式：**
 - `file`: 本地文件存储（默认）

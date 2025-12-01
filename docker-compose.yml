@@ -15,5 +15,8 @@ services:
       ## MySQL格式: mysql://user:password@host:port/database
       ## Redis格式: redis://host:port/db 或 redis://user:password@host:port/db
 
+      # =====Flow Session Token (默认值，管理后台没有配置时使用)=====
+      # - FLOW_SESSION_TOKEN=your_session_token_here
+
 volumes:
   grok_data:
