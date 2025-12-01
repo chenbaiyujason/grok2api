@@ -166,8 +166,22 @@ async def get_credits(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]
                 "user_paygate_tier": ""
             }
         
-        # 获取 access_token
-        access_token = await FlowClient.get_access_token(session_token)
+        # 获取 access_token（带重试逻辑）
+        access_token = None
+        for attempt in range(2):  # 最多重试一次
+            try:
+                access_token = await FlowClient.get_access_token(session_token)
+                break
+            except GrokApiException as e:
+                if e.error_code == "NO_ACCESS_TOKEN" and attempt == 0:
+                    # 清除缓存并重试一次
+                    FlowClient.clear_access_token_cache(session_token)
+                    logger.warning("[Admin] access_token 获取失败，清除缓存后重试")
+                    continue
+                raise
+        
+        if not access_token:
+            raise GrokApiException("获取 access_token 失败", "NO_ACCESS_TOKEN")
         
         # 获取余额
         credits_data = await FlowClient.get_credits(access_token)

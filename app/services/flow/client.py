@@ -79,6 +79,16 @@ class FlowClient:
     """Flow API 客户端"""
     
     @staticmethod
+    def clear_access_token_cache(session_token: str):
+        """清除指定 session_token 的 access_token 缓存
+        
+        Args:
+            session_token: session_token
+        """
+        _access_token_cache.pop(session_token, None)
+        logger.debug(f"[Flow] 已清除 access_token 缓存: {session_token[:20]}...")
+    
+    @staticmethod
     def _get_video_model_key(
         model: str,
         aspect_ratio: str,
@@ -228,6 +238,8 @@ class FlowClient:
             if not access_token:
                 # 清除可能存在的无效缓存
                 _access_token_cache.pop(cache_key, None)
+                # 记录详细响应信息以便调试
+                logger.error(f"[Flow] API 响应中 access_token 不存在，响应内容: {data}")
                 raise GrokApiException("access_token 不存在", "NO_ACCESS_TOKEN")
             
             # 更新缓存
