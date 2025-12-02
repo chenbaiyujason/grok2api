@@ -41,6 +41,11 @@ class Env:
         """Flow Session Token（默认值，从环境变量读取）"""
         return os.getenv("FLOW_SESSION_TOKEN")
 
+    @property
+    def flow_csrf_token(self) -> Optional[str]:
+        """Flow CSRF Token（默认值，从环境变量读取）"""
+        return os.getenv("FLOW_CSRF_TOKEN")
+
 
 # 全局实例
 env = Env()

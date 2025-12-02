@@ -144,7 +144,7 @@ class ConfigManager:
             return csrf_token
         
         # 如果管理后台没有配置，则使用环境变量
-        env_token = getattr(env, "flow_csrf_token", None) or ""
+        env_token = env.flow_csrf_token or ""
         return env_token.strip()
 
 

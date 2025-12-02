@@ -1182,34 +1182,99 @@ class FlowClient:
             if response.status_code != 200:
                 # 尝试获取错误详情
                 error_detail = f"状态码: {response.status_code}"
+                error_data = {}
+                error_code = None
+                error_message = None
+                error_status = None
                 try:
-                    error_body = response.text
-                    if error_body:
-                        error_detail += f", 响应: {error_body[:500]}"
-                except Exception:
-                    pass
-                logger.error(f"[Flow] 上传图片失败: {error_detail}")
+                    if response.content:
+                        error_data = response.json() if hasattr(response, 'json') else {}
+                        # 提取错误代码、消息和状态
+                        if isinstance(error_data, dict):
+                            error_obj = error_data.get("error", {})
+                            if isinstance(error_obj, dict):
+                                error_code = error_obj.get("code") or error_obj.get("status")
+                                error_message = error_obj.get("message")
+                                error_status = error_obj.get("status")
+                            # 如果没有error字段，尝试直接从顶层获取
+                            if not error_code:
+                                error_code = error_data.get("code")
+                            if not error_message:
+                                error_message = error_data.get("message")
+                            if not error_status:
+                                error_status = error_data.get("status")
+                        
+                        error_body = response.text if hasattr(response, 'text') else str(response.content[:1000])
+                        
+                        # 构建详细的错误信息
+                        if error_code:
+                            error_detail += f", 错误代码: {error_code}"
+                        if error_message:
+                            error_detail += f", 错误消息: {error_message}"
+                        if error_status:
+                            error_detail += f", 错误状态: {error_status}"
+                        error_detail += f", 完整响应: {error_body[:1000]}"
+                except Exception as e:
+                    error_detail += f", 解析响应失败: {e}"
+                
+                logger.error(
+                    f"[Flow] 上传图片失败: {error_detail}, "
+                    f"URL: {UPLOAD_IMAGE_URL}, "
+                    f"error_code={error_code}, "
+                    f"error_message={error_message}, "
+                    f"error_status={error_status}, "
+                    f"mime_type: {mime_type}, "
+                    f"aspect_ratio: {aspect_ratio}"
+                )
+                
+                error_msg = error_message or f"上传图片失败 (状态码: {response.status_code})"
+                if error_code:
+                    error_msg += f", 错误代码: {error_code}"
+                
                 raise GrokApiException(
-                    f"上传图片失败: {error_detail}",
+                    f"上传图片失败: {error_msg}. {error_detail}",
                     "HTTP_ERROR",
-                    {"status": response.status_code}
+                    {
+                        "status": response.status_code,
+                        "error": error_data,
+                        "error_code": error_code,
+                        "error_message": error_message,
+                        "error_status": error_status,
+                        "url": UPLOAD_IMAGE_URL
+                    }
                 )
             
-            data = response.json()
-            media_generation_id = data.get("mediaGenerationId", {}).get("mediaGenerationId")
-            
-            if not media_generation_id:
-                raise GrokApiException("上传图片失败: 未返回 mediaGenerationId", "UPLOAD_ERROR")
-            
-            logger.debug(f"[Flow] 图片上传成功: {media_generation_id[:50]}...")
-            return media_generation_id
+            try:
+                data = response.json()
+                media_generation_id = data.get("mediaGenerationId", {}).get("mediaGenerationId")
+                
+                if not media_generation_id:
+                    logger.error(f"[Flow] 上传图片失败: 未返回 mediaGenerationId, 响应数据: {data}")
+                    raise GrokApiException("上传图片失败: 未返回 mediaGenerationId", "UPLOAD_ERROR", {"response": data})
+                
+                logger.debug(f"[Flow] 图片上传成功: {media_generation_id[:50]}...")
+                return media_generation_id
+            except Exception as e:
+                error_detail = f"解析响应失败: {type(e).__name__}: {e}"
+                if hasattr(response, 'text'):
+                    error_detail += f", 响应内容: {response.text[:500]}"
+                logger.error(f"[Flow] {error_detail}")
+                raise GrokApiException(
+                    f"上传图片失败: {error_detail}",
+                    "JSON_ERROR",
+                    {"status": response.status_code, "response_preview": str(response.content[:500]) if hasattr(response, 'content') else None}
+                )
             
         except curl_requests.RequestsError as e:
-            logger.error(f"[Flow] 网络错误: {e}")
-            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
+            error_detail = f"网络错误: {type(e).__name__}: {str(e)}"
+            logger.error(f"[Flow] {error_detail}, URL: {UPLOAD_IMAGE_URL}")
+            raise GrokApiException(f"网络错误: {error_detail}", "NETWORK_ERROR") from e
+        except GrokApiException:
+            raise
         except Exception as e:
-            logger.error(f"[Flow] 上传图片失败: {e}")
-            raise GrokApiException(f"上传图片失败: {e}", "REQUEST_ERROR") from e
+            error_detail = f"未知错误: {type(e).__name__}: {str(e)}"
+            logger.error(f"[Flow] 上传图片失败: {error_detail}, URL: {UPLOAD_IMAGE_URL}")
+            raise GrokApiException(f"上传图片失败: {error_detail}", "REQUEST_ERROR") from e
 
     @staticmethod
     async def generate_image(
@@ -1235,62 +1300,244 @@ class FlowClient:
         Returns:
             生成结果
         """
-        try:
-            if seed is None:
-                import random
-                seed = random.randint(1, 999999)
-            
-            request_data = {
-                "seed": seed,
-                "imageModelName": image_model_name,
-                "imageAspectRatio": aspect_ratio,
-                "prompt": prompt,
-                "imageInputs": []
-            }
-            
-            # 如果是图生图，添加参考图片
-            if reference_image_id:
-                request_data["imageInputs"] = [{
-                    "name": reference_image_id,
-                    "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
-                }]
-            
-            body = {
-                "requests": [request_data]
-            }
-            
-            url = GENERATE_IMAGE_URL_TEMPLATE.format(project_id=project_id)
-            
-            headers = _get_base_headers()
-            headers.update({
-                "authorization": f"Bearer {access_token}",
-                "content-type": "text/plain;charset=UTF-8"
-            })
-            
-            response = await asyncio.to_thread(
-                curl_requests.post,
-                url,
-                headers=headers,
-                data=orjson.dumps(body),
-                impersonate=BROWSER,
-                timeout=TIMEOUT
-            )
-            
-            if response.status_code != 200:
-                raise GrokApiException(
-                    f"生成图片失败: {response.status_code}",
-                    "HTTP_ERROR",
-                    {"status": response.status_code}
+        if seed is None:
+            import random
+            seed = random.randint(1, 999999)
+        
+        request_data = {
+            "seed": seed,
+            "imageModelName": image_model_name,
+            "imageAspectRatio": aspect_ratio,
+            "prompt": prompt,
+            "imageInputs": []
+        }
+        
+        # 如果是图生图，添加参考图片
+        if reference_image_id:
+            request_data["imageInputs"] = [{
+                "name": reference_image_id,
+                "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+            }]
+        
+        body = {
+            "requests": [request_data]
+        }
+        
+        url = GENERATE_IMAGE_URL_TEMPLATE.format(project_id=project_id)
+        
+        headers = _get_base_headers()
+        headers.update({
+            "authorization": f"Bearer {access_token}",
+            "content-type": "text/plain;charset=UTF-8"
+        })
+        
+        last_error = None
+        for attempt in range(MAX_RETRY):
+            try:
+                logger.debug(f"[Flow] 生成图片请求 (尝试 {attempt + 1}/{MAX_RETRY}): project_id={project_id[:20]}..., prompt={prompt[:50]}..., seed={seed}")
+                
+                response = await asyncio.to_thread(
+                    curl_requests.post,
+                    url,
+                    headers=headers,
+                    data=orjson.dumps(body),
+                    impersonate=BROWSER,
+                    timeout=TIMEOUT
                 )
-            
-            data = response.json()
-            logger.debug("[Flow] 图片生成成功")
-            return data
-            
-        except curl_requests.RequestsError as e:
-            logger.error(f"[Flow] 网络错误: {e}")
-            raise GrokApiException(f"网络错误: {e}", "NETWORK_ERROR") from e
-        except Exception as e:
-            logger.error(f"[Flow] 生成图片失败: {e}")
-            raise GrokApiException(f"生成图片失败: {e}", "REQUEST_ERROR") from e
+                
+                # 记录响应状态
+                logger.debug(f"[Flow] 生成图片响应: status_code={response.status_code}")
+                
+                # 检查 429 错误（并发限制）
+                if response.status_code == 429:
+                    error_data = {}
+                    error_code = None
+                    error_message = None
+                    error_detail = f"状态码: {response.status_code}"
+                    try:
+                        if response.content:
+                            error_data = response.json() if hasattr(response, 'json') else {}
+                            # 提取错误代码和消息
+                            if isinstance(error_data, dict):
+                                error_obj = error_data.get("error", {})
+                                if isinstance(error_obj, dict):
+                                    error_code = error_obj.get("code") or error_obj.get("status")
+                                    error_message = error_obj.get("message")
+                                error_body = response.text if hasattr(response, 'text') else str(response.content[:500])
+                                if error_code:
+                                    error_detail += f", 错误代码: {error_code}"
+                                if error_message:
+                                    error_detail += f", 错误消息: {error_message}"
+                                error_detail += f", 完整响应: {error_body[:500]}"
+                    except Exception as e:
+                        error_detail += f", 解析响应失败: {e}"
+                    
+                    logger.warning(
+                        f"[Flow] 生成图片遇到并发限制: {error_detail}, "
+                        f"error_code={error_code}, error_message={error_message}"
+                    )
+                    
+                    if attempt < MAX_RETRY - 1:
+                        wait_time = RETRY_DELAY * (attempt + 1)
+                        logger.warning(f"[Flow] 等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        error_msg = error_message or "达到并发限制，请稍后重试"
+                        if error_code:
+                            error_msg += f" (错误代码: {error_code})"
+                        raise GrokApiException(
+                            f"生成图片失败: {error_msg}. {error_detail}",
+                            "RATE_LIMIT_ERROR",
+                            {
+                                "status": 429,
+                                "error": error_data,
+                                "error_code": error_code,
+                                "error_message": error_message,
+                                "attempt": attempt + 1
+                            }
+                        )
+                
+                # 检查其他错误状态码
+                if response.status_code != 200:
+                    error_detail = f"状态码: {response.status_code}"
+                    error_data = {}
+                    error_code = None
+                    error_message = None
+                    error_status = None
+                    try:
+                        if response.content:
+                            error_data = response.json() if hasattr(response, 'json') else {}
+                            # 提取错误代码、消息和状态
+                            if isinstance(error_data, dict):
+                                error_obj = error_data.get("error", {})
+                                if isinstance(error_obj, dict):
+                                    error_code = error_obj.get("code") or error_obj.get("status")
+                                    error_message = error_obj.get("message")
+                                    error_status = error_obj.get("status")
+                                # 如果没有error字段，尝试直接从顶层获取
+                                if not error_code:
+                                    error_code = error_data.get("code")
+                                if not error_message:
+                                    error_message = error_data.get("message")
+                                if not error_status:
+                                    error_status = error_data.get("status")
+                            
+                            error_body = response.text if hasattr(response, 'text') else str(response.content[:1000])
+                            
+                            # 构建详细的错误信息
+                            if error_code:
+                                error_detail += f", 错误代码: {error_code}"
+                            if error_message:
+                                error_detail += f", 错误消息: {error_message}"
+                            if error_status:
+                                error_detail += f", 错误状态: {error_status}"
+                            error_detail += f", 完整响应: {error_body[:1000]}"
+                            
+                            logger.error(
+                                f"[Flow] 生成图片失败: {error_detail}, "
+                                f"URL: {url}, "
+                                f"error_code={error_code}, "
+                                f"error_message={error_message}, "
+                                f"error_status={error_status}, "
+                                f"请求体: {orjson.dumps(body).decode('utf-8')[:500]}"
+                            )
+                    except Exception as e:
+                        error_detail += f", 解析响应失败: {e}"
+                        logger.error(
+                            f"[Flow] 生成图片失败: {error_detail}, "
+                            f"URL: {url}, "
+                            f"解析错误: {e}, "
+                            f"原始响应: {str(response.content[:500]) if hasattr(response, 'content') else 'N/A'}"
+                        )
+                    
+                    # 对于 400 错误，不重试（可能是请求参数错误）
+                    if response.status_code == 400:
+                        error_msg = error_message or f"请求参数错误 (状态码: {response.status_code})"
+                        if error_code:
+                            error_msg += f", 错误代码: {error_code}"
+                        raise GrokApiException(
+                            f"生成图片失败: {error_msg}. {error_detail}",
+                            "HTTP_ERROR",
+                            {
+                                "status": response.status_code,
+                                "error": error_data,
+                                "error_code": error_code,
+                                "error_message": error_message,
+                                "error_status": error_status,
+                                "url": url
+                            }
+                        )
+                    
+                    # 对于 500/502/503 等服务器错误，可以重试
+                    if response.status_code >= 500 and attempt < MAX_RETRY - 1:
+                        wait_time = RETRY_DELAY * (attempt + 1)
+                        logger.warning(f"[Flow] 服务器错误 {response.status_code}，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    
+                    error_msg = error_message or f"HTTP错误 (状态码: {response.status_code})"
+                    if error_code:
+                        error_msg += f", 错误代码: {error_code}"
+                    raise GrokApiException(
+                        f"生成图片失败: {error_msg}. {error_detail}",
+                        "HTTP_ERROR",
+                        {
+                            "status": response.status_code,
+                            "error": error_data,
+                            "error_code": error_code,
+                            "error_message": error_message,
+                            "error_status": error_status,
+                            "url": url,
+                            "attempt": attempt + 1
+                        }
+                    )
+                
+                # 成功响应
+                try:
+                    data = response.json()
+                    logger.debug(f"[Flow] 图片生成成功: 返回数据包含 {len(data.get('media', []))} 个媒体项")
+                    return data
+                except Exception as e:
+                    error_detail = f"解析响应JSON失败: {e}"
+                    if hasattr(response, 'text'):
+                        error_detail += f", 响应内容: {response.text[:500]}"
+                    logger.error(f"[Flow] {error_detail}")
+                    raise GrokApiException(
+                        f"生成图片失败: {error_detail}",
+                        "JSON_ERROR",
+                        {"status": response.status_code, "response_preview": str(response.content[:500]) if hasattr(response, 'content') else None}
+                    )
+                
+            except curl_requests.RequestsError as e:
+                last_error = e
+                error_detail = f"网络错误: {type(e).__name__}: {str(e)}"
+                logger.error(f"[Flow] {error_detail}")
+                
+                # 网络错误可以重试
+                if attempt < MAX_RETRY - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    logger.warning(f"[Flow] 网络错误，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRY})")
+                    await asyncio.sleep(wait_time)
+                    continue
+                
+                raise GrokApiException(f"网络错误: {error_detail}", "NETWORK_ERROR", {"attempt": attempt + 1}) from e
+            except GrokApiException:
+                # 重新抛出，不重试
+                raise
+            except Exception as e:
+                last_error = e
+                error_detail = f"未知错误: {type(e).__name__}: {str(e)}"
+                logger.error(f"[Flow] 生成图片失败: {error_detail}, URL: {url}")
+                
+                # 其他异常不重试
+                raise GrokApiException(f"生成图片失败: {error_detail}", "REQUEST_ERROR", {"attempt": attempt + 1}) from e
+        
+        # 如果所有重试都失败了
+        if last_error:
+            raise GrokApiException(
+                f"生成图片失败: 重试 {MAX_RETRY} 次后仍然失败",
+                "REQUEST_ERROR",
+                {"attempt": MAX_RETRY, "last_error": str(last_error)}
+            )
 

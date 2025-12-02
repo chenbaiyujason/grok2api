@@ -646,26 +646,55 @@ async def generate_image(
         return response
         
     except GrokApiException as e:
-        logger.error(f"[Image] 生成图片失败: {e}")
+        error_details = {
+            "message": str(e),
+            "type": "api_error",
+            "code": e.error_code
+        }
+        if e.details:
+            error_details["details"] = e.details
+        
+        # 提取错误代码和消息（如果存在）
+        api_error_code = e.details.get("error_code") if e.details else None
+        api_error_message = e.details.get("error_message") if e.details else None
+        api_error_status = e.details.get("error_status") if e.details else None
+        
+        logger.error(
+            f"[Image] 生成图片失败: {e.message}, "
+            f"error_code={e.error_code}, "
+            f"api_error_code={api_error_code}, "
+            f"api_error_message={api_error_message}, "
+            f"api_error_status={api_error_status}, "
+            f"details={e.details}, "
+            f"prompt={request.prompt[:100]}..."
+        )
+        
+        # 根据错误码确定HTTP状态码
+        status_code = 500
+        if e.error_code == "RATE_LIMIT_ERROR":
+            status_code = 429
+        elif e.error_code == "HTTP_ERROR" and e.details and e.details.get("status"):
+            status_code = e.details.get("status", 500)
+        
         raise HTTPException(
-            status_code=500,
-            detail={
-                "error": {
-                    "message": str(e),
-                    "type": "api_error",
-                    "code": e.error_code
-                }
-            }
+            status_code=status_code,
+            detail={"error": error_details}
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Image] 生成图片异常: {e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(
+            f"[Image] 生成图片异常: {type(e).__name__}: {e}, "
+            f"prompt={request.prompt[:100]}..., "
+            f"traceback={error_trace}"
+        )
         raise HTTPException(
             status_code=500,
             detail={
                 "error": {
-                    "message": f"生成图片失败: {e}",
+                    "message": f"生成图片失败: {str(e)}",
                     "type": "internal_error",
                     "code": "GENERATION_ERROR"
                 }
